@@ -24,25 +24,27 @@ impl<'a, T> Thunk for Cell<'a, T> {
     }
 }
 
-pub struct Comp<'a, I: 'a, O: 'a> {
+pub struct Comp<'a, I: 'a, O: Clone + 'a> {
     i: &'a I,
     f: &'a dyn Fn(&I) -> O,
+    last: O,
 }
 
-impl<'a, I, O> Comp<'a, I, O> {
+impl<'a, I, O: Clone> Comp<'a, I, O> {
     pub fn new(i: &'a I, f: &'a dyn Fn(&I) -> O) -> Self {
         Self {
             i,
             f,
+            last: f(i).clone(),
         }
     }
 }
 
-impl<'a, I, O> Thunk for Comp<'a, I, O> {
+impl<'a, I, O: Clone> Thunk for Comp<'a, I, O> {
     type Output = O;
 
     fn value(&self) -> Self::Output {
-        (self.f)(self.i)
+        self.last.clone()
     }
 }
 

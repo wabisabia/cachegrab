@@ -11,7 +11,7 @@ fn bench_additions(c: &mut Criterion) {
     group.sample_size(1000);
     group.measurement_time(std::time::Duration::from_secs(10));
     group.bench_function("DCG Addition", |b| b.iter(|| add.value()));
-    group.bench_function("Normal Addition", |b| b.iter(|| black_box(1 + 2)));
+    group.bench_function("Normal Addition", |b| b.iter(|| black_box(1) + black_box(2)));
 }
 
 criterion_group!(benches, bench_additions);
