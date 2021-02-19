@@ -1,5 +1,5 @@
-mod thunk;
-use thunk::{Thunk, Cell, Comp};
+mod lib;
+use lib::{Thunk, Cell, Comp};
 
 fn main() {
     let a = Cell::new(&1);
