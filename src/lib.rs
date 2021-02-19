@@ -10,7 +10,7 @@ pub struct Cell<'a, T: 'a>{
 
 impl<'a, T> Cell<'a, T> {
     pub const fn new(value: &'a T) -> Self {
-        Self{
+        Self {
             value,
         }
     }
@@ -95,5 +95,25 @@ mod tests {
         let abc = (&a, &b, &c);
         let add = Comp::new(&abc, &|(x, y, z)| x.value() + y.value() + z.value());
         assert_eq!(add.value(), 6);
+    }
+
+    #[test]
+    fn it_nests_computations() {
+        let a = Cell::new(&1);
+        let b = Cell::new(&2);
+        let c = Cell::new(&3);
+        let ab = (&a, &b);
+        let add_ab = Comp::new(&ab, &|(x, y)| x.value() + y.value());
+        let ab_c = (&add_ab, &c);
+        let a_plus_b_div_c = Comp::new(&ab_c, &|(x, y)| x.value() / y.value());
+        assert_eq!(a_plus_b_div_c.value(), 1);
+    }
+
+    #[test]
+    fn it_allows_computation_reuse() {
+        let a = Cell::new(&1);
+        let aa = (&a, &a);
+        let add_aa = Comp::new(&aa, &|(x, y)| x.value() + y.value());
+        assert_eq!(add_aa.value(), 2);
     }
 }
