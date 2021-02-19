@@ -56,6 +56,19 @@ mod tests {
         assert_eq!(a.value(), &1);
     }
 
+    fn adder(t: &(&Cell<u32>, &Cell<u32>)) -> u32 {
+        t.0.value() + t.1.value()
+    }
+
+    #[test]
+    fn it_accepts_function_pointers() {
+        let a = Cell::new(&1);
+        let b = Cell::new(&2);
+        let ab = (&a, &b);
+        let add = Comp::new(&ab, &adder);
+        assert_eq!(add.value(), 3);
+    }
+
     #[test]
     fn it_computes_constants() {
         let a = Cell::new(&1);
