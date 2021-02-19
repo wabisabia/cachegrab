@@ -48,15 +48,29 @@ impl<I, O> Thunk for Comp<I, O> {
 
 static A: Cell<u32> = Cell::new(&1);
 static B: Cell<u32> = Cell::new(&2);
+static C: Cell<u32> = Cell::new(&3);
 static AB: (&Cell<u32>, &Cell<u32>) = (&A, &B);
+static ABC: (&Cell<u32>, &Cell<u32>, &Cell<u32>) = (&A, &B, &C);
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn basic_addition() {
+    fn constant() {
+        let c = Comp::new(&A, &|x| x.value());
+        assert_eq!(c.value(), &1);
+    }
+
+    #[test]
+    fn binary_addition() {
         let add = Comp::new(&AB, &|(x, y)| x.value() + y.value());
         assert_eq!(add.value(), 3);
+    }
+
+    #[test]
+    fn trinary_addition() {
+        let add = Comp::new(&ABC, &|(x, y, z)| x.value() + y.value() + z.value());
+        assert_eq!(add.value(), 6);
     }
 }
