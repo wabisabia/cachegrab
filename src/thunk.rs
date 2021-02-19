@@ -4,33 +4,33 @@ pub trait Thunk {
     fn value(&self) -> Self::Output;
 }
 
-pub struct Cell<T: 'static>{
-    value: &'static T,
+pub struct Cell<'a, T: 'a>{
+    value: &'a T,
 }
 
-impl<T> Cell<T> {
-    pub const fn new(value: &'static T) -> Self {
+impl<'a, T> Cell<'a, T> {
+    pub const fn new(value: &'a T) -> Self {
         Self{
             value,
         }
     }
 }
 
-impl<T> Thunk for Cell<T> {
-    type Output = &'static T;
+impl<'a, T> Thunk for Cell<'a, T> {
+    type Output = &'a T;
 
     fn value(&self) -> Self::Output {
         self.value
     }
 }
 
-pub struct Comp<I: 'static, O: 'static> {
-    i: &'static I,
-    f: &'static dyn Fn(&I) -> O,
+pub struct Comp<'a, I: 'a, O: 'a> {
+    i: &'a I,
+    f: &'a dyn Fn(&I) -> O,
 }
 
-impl<I, O> Comp<I, O> {
-    pub fn new(i: &'static I, f: &'static dyn Fn(&I) -> O) -> Self {
+impl<'a, I, O> Comp<'a, I, O> {
+    pub fn new(i: &'a I, f: &'a dyn Fn(&I) -> O) -> Self {
         Self {
             i,
             f,
@@ -38,7 +38,7 @@ impl<I, O> Comp<I, O> {
     }
 }
 
-impl<I, O> Thunk for Comp<I, O> {
+impl<'a, I, O> Thunk for Comp<'a, I, O> {
     type Output = O;
 
     fn value(&self) -> Self::Output {
@@ -46,31 +46,39 @@ impl<I, O> Thunk for Comp<I, O> {
     }
 }
 
-static A: Cell<u32> = Cell::new(&1);
-static B: Cell<u32> = Cell::new(&2);
-static C: Cell<u32> = Cell::new(&3);
-static AB: (&Cell<u32>, &Cell<u32>) = (&A, &B);
-static ABC: (&Cell<u32>, &Cell<u32>, &Cell<u32>) = (&A, &B, &C);
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
+    fn cell() {
+        let a = Cell::new(&1);
+        assert_eq!(a.value(), &1);
+    }
+
+    #[test]
     fn constant() {
-        let c = Comp::new(&A, &|x| x.value());
+        let a = Cell::new(&1);
+        let c = Comp::new(&a, &|x| x.value());
         assert_eq!(c.value(), &1);
     }
 
     #[test]
     fn binary_addition() {
-        let add = Comp::new(&AB, &|(x, y)| x.value() + y.value());
+        let a = Cell::new(&1);
+        let b = Cell::new(&2);
+        let ab = (&a, &b);
+        let add = Comp::new(&ab, &|(x, y)| x.value() + y.value());
         assert_eq!(add.value(), 3);
     }
 
     #[test]
     fn trinary_addition() {
-        let add = Comp::new(&ABC, &|(x, y, z)| x.value() + y.value() + z.value());
+        let a = Cell::new(&1);
+        let b = Cell::new(&2);
+        let c = Cell::new(&3);
+        let abc = (&a, &b, &c);
+        let add = Comp::new(&abc, &|(x, y, z)| x.value() + y.value() + z.value());
         assert_eq!(add.value(), 6);
     }
 }
