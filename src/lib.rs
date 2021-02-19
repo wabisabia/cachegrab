@@ -51,20 +51,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn cell() {
+    fn it_creates_cells() {
         let a = Cell::new(&1);
         assert_eq!(a.value(), &1);
     }
 
     #[test]
-    fn constant() {
+    fn it_computes_constants() {
         let a = Cell::new(&1);
         let c = Comp::new(&a, &|x| x.value());
         assert_eq!(c.value(), &1);
     }
 
     #[test]
-    fn binary_addition() {
+    fn it_computes_binary_addition() {
         let a = Cell::new(&1);
         let b = Cell::new(&2);
         let ab = (&a, &b);
@@ -73,7 +73,7 @@ mod tests {
     }
 
     #[test]
-    fn trinary_addition() {
+    fn it_computes_trinary_addition() {
         let a = Cell::new(&1);
         let b = Cell::new(&2);
         let c = Cell::new(&3);
