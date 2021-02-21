@@ -1,49 +1,62 @@
-pub trait Thunk {
-    type Output;
-
-    fn value(&self) -> Self::Output;
+pub trait Thunk<T> {
+    fn value(&self) -> T;
 }
 
-pub struct Cell<'a, T: 'a>{
+pub struct Cell<'a, T>
+where
+    T: Clone,
+{
     value: &'a T,
 }
 
-impl<'a, T> Cell<'a, T> {
-    pub const fn new(value: &'a T) -> Self {
-        Self {
-            value,
-        }
+impl<'a, T> Cell<'a, T>
+where
+    T: Clone,
+{
+    pub fn new(value: &'a T) -> Self {
+        Self { value }
     }
 }
 
-impl<'a, T> Thunk for Cell<'a, T> {
-    type Output = &'a T;
-
-    fn value(&self) -> Self::Output {
-        self.value
+impl<'a, T> Thunk<T> for Cell<'a, T>
+where
+    T: Clone,
+{
+    fn value(&self) -> T {
+        self.value.clone()
     }
 }
 
-pub struct Comp<'a, I: 'a, O: Clone + 'a> {
-    i: &'a I,
-    f: &'a dyn Fn(&I) -> O,
+pub struct Comp<'a, 'b, F, I, O>
+where
+    F: Fn(&I) -> O,
+    O: Clone,
+{
     last: O,
+    f: &'a F,
+    i: &'b I,
 }
 
-impl<'a, I, O: Clone> Comp<'a, I, O> {
-    pub fn new(i: &'a I, f: &'a dyn Fn(&I) -> O) -> Self {
+impl<'a, 'b, F, I, O> Comp<'a, 'b, F, I, O>
+where
+    F: Fn(&I) -> O,
+    O: Clone,
+{
+    pub fn new(i: &'b I, f: &'a F) -> Self {
         Self {
-            i,
-            f,
             last: f(i).clone(),
+            f,
+            i,
         }
     }
 }
 
-impl<'a, I, O: Clone> Thunk for Comp<'a, I, O> {
-    type Output = O;
-
-    fn value(&self) -> Self::Output {
+impl<'a, 'b, F, I, O> Thunk<O> for Comp<'a, 'b, F, I, O>
+where
+    F: Fn(&I) -> O,
+    O: Clone,
+{
+    fn value(&self) -> O {
         self.last.clone()
     }
 }
@@ -55,7 +68,7 @@ mod tests {
     #[test]
     fn it_creates_cells() {
         let a = Cell::new(&1);
-        assert_eq!(a.value(), &1);
+        assert_eq!(a.value(), 1);
     }
 
     fn adder(t: &(&Cell<u32>, &Cell<u32>)) -> u32 {
@@ -75,7 +88,7 @@ mod tests {
     fn it_computes_constants() {
         let a = Cell::new(&1);
         let c = Comp::new(&a, &|x| x.value());
-        assert_eq!(c.value(), &1);
+        assert_eq!(c.value(), 1);
     }
 
     #[test]
