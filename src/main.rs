@@ -19,7 +19,7 @@ fn main() {
     let two_times_thunk_plus_three = || dcg.get(thunk2) + dcg.get(thunk3);
     let _ = dcg.thunk(&two_times_thunk_plus_three, &[thunk2, thunk3]);
 
-    dcg.set(a, 2).unwrap();
+    dcg.set(a, 2);
 
-    println!("{:?}", Dot::new(&*dcg.graph.borrow()));
+    println!("{:?}", Dot::new(&*dcg.borrow()));
 }
