@@ -1,5 +1,4 @@
-mod dcg;
-use dcg::Dcg;
+use dcg::dcg::Dcg;
 use petgraph::dot::Dot;
 
 fn main() {

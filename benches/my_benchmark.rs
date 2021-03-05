@@ -1,18 +1,22 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use dcg::{Cell, Comp, Thunk};
+use criterion::{criterion_group, criterion_main, Criterion};
+use dcg::dcg::Dcg;
 
 fn bench_additions(c: &mut Criterion) {
     // Set up cells and computations
-    let a = Cell::new(&1);
-    let b = Cell::new(&2);
-    let ab = (&a, &b);
-    let add = Comp::new(&ab, &|(x, y)| x.value() + y.value());
+    let dcg = Dcg::new();
+    let a = dcg.cell("something".to_string());
+    let b = dcg.cell("borrowed".to_string());
+
+    let concat_ab = || format!("{} {}", dcg.get(a), dcg.get(b));
+    let memo = dcg.memo(&concat_ab, &[a, b]);
+    let thunk = dcg.thunk(&concat_ab, &[a, b]);
 
     // Do benchmarking
     let mut group = c.benchmark_group("Addition");
-    group.bench_function("DCG Addition", |b| b.iter(|| add.value()));
-    group.bench_function("Normal Addition", |b| {
-        b.iter(|| black_box(1) + black_box(2))
+    group.bench_function("Memo Concat", |b| b.iter(|| dcg.get(memo)));
+    group.bench_function("Thunk Concat", |b| b.iter(|| dcg.get(thunk)));
+    group.bench_function("Raw Concat", |b| {
+        b.iter(|| format!("{} {}", "something".to_string(), "borrowed".to_string()))
     });
 }
 
