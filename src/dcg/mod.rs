@@ -268,15 +268,25 @@ where
     /// Sets the value of `node` to `new_value`, "dirtying" all dependent
     /// nodes.
     ///
-    /// If `node` is not a cell, returns a unit [`Result::Err`]. Otherwise,
-    /// dirties all nodes that are transitively dependent on `node` and
-    /// returns the previous cell value inside of a [`Result::Ok`].
+    /// Dirties all nodes that are transitively dependent on `node` and
+    /// returns the previous cell value.
     ///
-    /// The dirtying phase essentially performs a Depth-First-Search from
-    /// `node` and at each tree/cross edge, sets its weight to [`true`].
+    /// This function only accepts nodes generates by [`Dcg::cell`]:
+    /// ```compile_fail
+    /// let dcg = Dcg::new();
+    ///
+    /// let x = || 42;
+    /// let thunk = dcg.lone_thunk(&x);
+    ///
+    /// dcg.set(thunk, &x);
+    /// ```
+    ///
+    /// The dirtying phase performs a Depth-First-Search from `node` and at
+    /// each tree/cross edge, sets its weight to [`true`].
+    ///
     /// # Examples
     /// ```
-    /// use dcg::dcg::{Dcg, Node};
+    /// use dcg::dcg::Dcg;
     /// let dcg = Dcg::new();
     ///
     /// let cell = dcg.cell(1);
