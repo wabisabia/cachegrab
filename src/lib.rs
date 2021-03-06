@@ -14,10 +14,10 @@ pub enum Node<'a, T>
 where
     T: Clone + Eq + Debug,
 {
-    /// Contains a value of type `T`.
+    /// Contains a value of type [`Result<T ,T>`].
     ///
-    /// This value may be retrieved or replaced by calling [`Dcg::get`] or
-    /// [`Dcg::set`] on the corresponding [`DcgNode<Cell>`].
+    /// The underlying value may be retrieved or replaced by calling
+    /// [`Dcg::get`] or [`Dcg::set`] on the corresponding [`DcgNode<Cell>`].
     Cell(Result<T, T>),
 
     /// Contains a thunk which produces a value of type `T`.
