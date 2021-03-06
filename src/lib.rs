@@ -1,7 +1,7 @@
 //! Provides a struct [`Dcg`], which can be used to create and compose Dynamic
 //! Computation Graphs (DCGs).
 
-use std::{cell::RefCell, marker::PhantomData, ops::Deref};
+use std::{cell::RefCell, fmt::Debug, marker::PhantomData, ops::Deref};
 
 use petgraph::Direction;
 use petgraph::{
@@ -12,13 +12,13 @@ use petgraph::{
 /// Internal graph node type. Stores the type and data of a [`Dcg`] graph node.
 pub enum Node<'a, T>
 where
-    T: Clone,
+    T: Clone + Debug + Eq,
 {
     /// Contains a value of type `T`.
     ///
     /// This value may be retrieved or replaced by calling [`Dcg::get`] or
     /// [`Dcg::set`] on the corresponding [`DcgNode<Cell>`].
-    Cell(T),
+    Cell(Result<T, T>),
 
     /// Contains a thunk which produces a value of type `T`.
     ///
@@ -79,9 +79,15 @@ impl<Ty> From<DcgNode<Ty>> for NodeIndex {
     }
 }
 
-impl<T> std::fmt::Debug for Node<'_, T>
+impl<Ty> From<NodeIndex> for DcgNode<Ty> {
+    fn from(idx: NodeIndex) -> Self {
+        Self(idx, PhantomData)
+    }
+}
+
+impl<T> Debug for Node<'_, T>
 where
-    T: Clone + std::fmt::Debug,
+    T: Clone + Debug + Eq,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
@@ -161,7 +167,7 @@ type GraphRepr<'a, T> = RefCell<DiGraph<Node<'a, T>, bool>>;
 ///
 /// let dcg = Dcg::new();
 ///
-/// // This snippet compiles if the line below is uncommented
+/// // This snippet compiles successfully if the line below is uncommented
 /// // dcg.cell(1);
 /// ```
 /// [`Cell`]s can be created with [`Dcg::cell`].
@@ -198,11 +204,11 @@ type GraphRepr<'a, T> = RefCell<DiGraph<Node<'a, T>, bool>>;
 /// ```
 pub struct Dcg<'a, T>(pub GraphRepr<'a, T>)
 where
-    T: Clone;
+    T: Clone + Debug + Eq;
 
 impl<'a, T> Deref for Dcg<'a, T>
 where
-    T: Clone,
+    T: Clone + Debug + Eq,
 {
     type Target = GraphRepr<'a, T>;
 
@@ -213,7 +219,7 @@ where
 
 impl<'a, T> Dcg<'a, T>
 where
-    T: Clone,
+    T: Clone + Debug + Eq,
 {
     /// Creates an empty DCG.
     /// # Examples
@@ -229,9 +235,17 @@ where
     }
 
     fn is_dirty(&self, node: NodeIndex) -> bool {
-        self.borrow()
-            .edges_directed(node, Direction::Incoming)
-            .any(|edge| *edge.weight())
+        match self.borrow().node_weight(node).unwrap() {
+            Node::Cell(result) => result.is_err(),
+            _ => self
+                .borrow()
+                .edges_directed(node, Direction::Incoming)
+                .any(|edge| *edge.weight()),
+        }
+    }
+
+    fn is_clean(&self, node: NodeIndex) -> bool {
+        !self.is_dirty(node)
     }
 
     fn add_dependencies(&self, node: NodeIndex, dependencies: &[NodeIndex]) {
@@ -262,7 +276,10 @@ where
     /// assert_eq!(dcg.get(cell), 1);
     /// ```
     pub fn cell(&self, value: T) -> DcgNode<Cell> {
-        DcgNode(self.borrow_mut().add_node(Node::Cell(value)), PhantomData)
+        DcgNode(
+            self.borrow_mut().add_node(Node::Cell(Ok(value))),
+            PhantomData,
+        )
     }
 
     /// Creates and adds a [`Node::Thunk`] and its [`DcgNode<Ty>`] dependencies
@@ -398,14 +415,17 @@ where
     }
 
     pub fn get<Ty>(&self, node: DcgNode<Ty>) -> T {
-        // TODO: The tricky bit...
-        match self.borrow().node_weight(node.into()).unwrap() {
-            Node::Cell(value) => value.clone(),
-            Node::Thunk(thunk) => thunk().clone(),
-            Node::Memo(thunk, value) => match value {
-                Some(value) => value.clone(),
-                None => thunk().clone(),
-            },
+        if self.is_clean(node.into()) {
+            match self.borrow().node_weight(node.into()).unwrap() {
+                Node::Cell(result) => result.clone().unwrap(),
+                Node::Thunk(thunk) => thunk().clone(),
+                Node::Memo(thunk, value) => match value {
+                    Some(value) => value.clone(),
+                    None => thunk().clone(),
+                },
+            }
+        } else {
+            unimplemented!()
         }
     }
 
@@ -470,9 +490,18 @@ where
     pub fn set(&self, node: DcgNode<Cell>, new_value: T) -> T {
         let idx = node.into();
         let value = match self.borrow_mut().node_weight_mut(idx).unwrap() {
-            Node::Cell(ref mut value) => {
+            Node::Cell(ref mut result) => {
+                let value = match result {
+                    Ok(value) => {
+                        if *value == new_value {
+                            return new_value;
+                        }
+                        value
+                    }
+                    Err(value) => value,
+                };
                 let tmp = value.clone();
-                *value = new_value;
+                *result = Err(new_value);
                 tmp
             }
             _ => unreachable!(),
@@ -626,13 +655,28 @@ mod tests {
 
         let graph = dcg.borrow();
 
-        assert_eq!(
-            *graph
-                .edge_weight(graph.find_edge(a.into(), thunk.into()).unwrap())
-                .unwrap(),
-            true
-        );
+        assert!(*graph
+            .edge_weight(graph.find_edge(a.into(), thunk.into()).unwrap())
+            .unwrap());
+    }
 
-        assert_eq!(dcg.get(thunk), 2);
+    #[test]
+    fn cleaning_phase() {
+        let dcg = Dcg::new();
+
+        let a = dcg.cell(1);
+
+        let get_a = || dcg.get(a);
+        let thunk = dcg.thunk(&get_a, &[a]);
+
+        dcg.set(a, 2);
+
+        assert_eq!(dcg.get(a), 2);
+
+        let graph = dcg.borrow();
+
+        assert!(!*graph
+            .edge_weight(graph.find_edge(a.into(), thunk.into()).unwrap())
+            .unwrap());
     }
 }
