@@ -47,10 +47,11 @@ pub struct Thunk {}
 /// [`DcgNode`] marker denoting a [`Dcg::memo`] or [`Dcg::lone_memo`].
 pub struct Memo {}
 
-/// Shallow wrapper around a [`NodeIndex`]. Contains information about the indexed node's type.
+/// Shallow wrapper around a [`NodeIndex`]. Contains information about the
+/// indexed node's type.
 ///
-/// The `Ty` marker provides compile-time information about a [`DcgNode`]'s type.
-/// Valid types are:
+/// The `Ty` marker provides compile-time information about a [`DcgNode`]'s
+/// type. Valid types are:
 ///
 /// - [`Cell`]
 /// - [`Thunk`]
@@ -75,12 +76,6 @@ impl<Ty> Copy for DcgNode<Ty> {}
 impl<Ty> From<DcgNode<Ty>> for NodeIndex {
     fn from(node: DcgNode<Ty>) -> Self {
         node.0
-    }
-}
-
-impl<Ty> From<NodeIndex> for DcgNode<Ty> {
-    fn from(idx: NodeIndex) -> Self {
-        Self(idx, PhantomData)
     }
 }
 
