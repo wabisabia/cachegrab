@@ -1,4 +1,4 @@
-use dcg::dcg::Dcg;
+use dcg::Dcg;
 use petgraph::dot::Dot;
 
 fn main() {
