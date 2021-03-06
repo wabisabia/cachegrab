@@ -161,7 +161,7 @@ type GraphRepr<'a, T> = RefCell<DiGraph<Node<'a, T>, bool>>;
 ///
 /// let dcg = Dcg::new();
 ///
-/// // This snippet compiles successfully if the line below is uncommented
+/// // This snippet compiles if the line below is uncommented
 /// // dcg.cell(1);
 /// ```
 /// [`Cell`]s can be created with [`Dcg::cell`].
