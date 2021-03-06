@@ -1,9 +1,10 @@
 use criterion::{criterion_group, criterion_main, Criterion};
-use dcg::dcg::Dcg;
+use dcg::Dcg;
 
 fn bench_additions(c: &mut Criterion) {
     // Set up cells and computations
     let dcg = Dcg::new();
+
     let a = dcg.cell("something".to_string());
     let b = dcg.cell("borrowed".to_string());
 
@@ -12,7 +13,7 @@ fn bench_additions(c: &mut Criterion) {
     let thunk = dcg.thunk(&concat_ab, &[a, b]);
 
     // Do benchmarking
-    let mut group = c.benchmark_group("Addition");
+    let mut group = c.benchmark_group("Concatenation");
     group.bench_function("Memo Concat", |b| b.iter(|| dcg.get(memo)));
     group.bench_function("Thunk Concat", |b| b.iter(|| dcg.get(thunk)));
     group.bench_function("Raw Concat", |b| {

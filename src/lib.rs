@@ -299,11 +299,11 @@ where
     /// let get_cell = || dcg.get(cell);
     /// let thunk = dcg.thunk(&get_cell, &[cell]);
     ///
-    /// let borrowed = dcg.borrow();
+    /// let graph = dcg.borrow();
     ///
-    /// assert_eq!(borrowed.node_count(), 2);
+    /// assert_eq!(graph.node_count(), 2);
     ///
-    /// assert!(borrowed.contains_edge(cell.into(), thunk.into()));
+    /// assert!(graph.contains_edge(cell.into(), thunk.into()));
     ///
     /// assert_eq!(dcg.get(thunk), dcg.get(cell));
     /// ```
@@ -340,15 +340,15 @@ where
     /// let get_cell = || dcg.get(cell);
     /// let memo = dcg.memo(&get_cell, &[cell]);
     ///
-    /// let borrowed = dcg.borrow();
+    /// let graph = dcg.borrow();
     ///
-    /// assert_eq!(borrowed.node_count(), 2);
+    /// assert_eq!(graph.node_count(), 2);
     ///
-    /// assert!(borrowed.contains_edge(cell.into(), memo.into()));
+    /// assert!(graph.contains_edge(cell.into(), memo.into()));
     ///
     /// assert_eq!(dcg.get(memo), dcg.get(cell));
     ///
-    /// match dcg.borrow().node_weight(memo.into()).unwrap() {
+    /// match graph.node_weight(memo.into()).unwrap() {
     ///     Node::Memo(_, Some(value)) => assert_eq!(*value, 1),
     ///     _ => (),
     /// };
