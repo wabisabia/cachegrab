@@ -1,7 +1,7 @@
 //! Provides a struct [`Dcg`], which can be used to create and compose Dynamic
 //! Computation Graphs (DCGs).
 
-use std::{cell::RefCell, fmt::Debug, marker::PhantomData, ops::Deref};
+use std::{cell::RefCell, fmt::Debug, marker::PhantomData, ops::Deref, ops::DerefMut};
 
 use petgraph::Direction;
 use petgraph::{
@@ -12,7 +12,7 @@ use petgraph::{
 /// Internal graph node type. Stores the type and data of a [`Dcg`] graph node.
 pub enum Node<'a, T>
 where
-    T: Clone + Debug + Eq,
+    T: Clone + Eq + Debug,
 {
     /// Contains a value of type `T`.
     ///
@@ -87,7 +87,7 @@ impl<Ty> From<NodeIndex> for DcgNode<Ty> {
 
 impl<T> Debug for Node<'_, T>
 where
-    T: Clone + Debug + Eq,
+    T: Clone + Eq + Debug,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
@@ -204,11 +204,11 @@ type GraphRepr<'a, T> = RefCell<DiGraph<Node<'a, T>, bool>>;
 /// ```
 pub struct Dcg<'a, T>(pub GraphRepr<'a, T>)
 where
-    T: Clone + Debug + Eq;
+    T: Clone + Eq + Debug;
 
 impl<'a, T> Deref for Dcg<'a, T>
 where
-    T: Clone + Debug + Eq,
+    T: Clone + Eq + Debug,
 {
     type Target = GraphRepr<'a, T>;
 
@@ -217,9 +217,18 @@ where
     }
 }
 
+impl<'a, T> DerefMut for Dcg<'a, T>
+where
+    T: Clone + Eq + Debug,
+{
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
 impl<'a, T> Dcg<'a, T>
 where
-    T: Clone + Debug + Eq,
+    T: Clone + Eq + Debug,
 {
     /// Creates an empty DCG.
     /// # Examples
