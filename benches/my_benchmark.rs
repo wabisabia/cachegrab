@@ -1,23 +1,61 @@
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use dcg::Dcg;
+use rand::seq::IteratorRandom;
 
 fn bench_additions(c: &mut Criterion) {
     // Set up cells and computations
     let dcg = Dcg::new();
 
-    let a = dcg.cell("something".to_string());
-    let b = dcg.cell("borrowed".to_string());
+    let needle = dcg.cell("a".to_string());
+    let haystack = dcg.cell("the quick brown fox jumped over the lazy dog".to_string());
 
-    let concat_ab = || format!("{} {}", dcg.get(a), dcg.get(b));
-    let memo = dcg.memo(&concat_ab, &[a, b]);
-    let thunk = dcg.thunk(&concat_ab, &[a, b]);
+    let remove_needles = || {
+        let needle = needle.get().chars().next().unwrap();
+        haystack.get().chars().filter(|c| *c == needle).collect()
+    };
+
+    let memo = dcg.memo(&remove_needles, &[needle, haystack]);
+    let thunk = dcg.thunk(&remove_needles, &[needle, haystack]);
 
     // Do benchmarking
-    let mut group = c.benchmark_group("Concatenation");
-    group.bench_function("Memo Concat", |b| b.iter(|| dcg.compute(memo)));
-    group.bench_function("Thunk Concat", |b| b.iter(|| dcg.compute(thunk)));
-    group.bench_function("Raw Concat", |b| {
-        b.iter(|| format!("{} {}", "something".to_string(), "borrowed".to_string()))
+    let mut group = c.benchmark_group("filter random letter");
+
+    let population = "aaaaaaaaaaaaaaaaaaaab";
+
+    group.bench_function("memo'd", |b| {
+        b.iter(|| {
+            needle.set(String::from(
+                population.chars().choose(&mut rand::thread_rng()).unwrap(),
+            ));
+            memo.query();
+        })
+    });
+
+    group.bench_function("thunk", |b| {
+        b.iter(|| {
+            needle.set(String::from(
+                population.chars().choose(&mut rand::thread_rng()).unwrap(),
+            ));
+            thunk.query();
+        })
+    });
+
+    group.bench_function("raw", |b| {
+        b.iter(|| {
+            let needle = black_box(
+                String::from(population.chars().choose(&mut rand::thread_rng()).unwrap())
+                    .chars()
+                    .next()
+                    .unwrap(),
+            );
+            black_box(
+                "the quick brown fox jumped over the lazy dog"
+                    .to_string()
+                    .chars()
+                    .filter(|c| *c == needle)
+                    .collect::<String>(),
+            );
+        })
     });
 }
 

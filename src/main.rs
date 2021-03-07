@@ -1,27 +1,40 @@
+use std::f32::consts::PI;
+
 use dcg::Dcg;
 use petgraph::dot::Dot;
 
 fn main() {
-    let dcg = Dcg::new();
+    let circle = Dcg::new();
 
-    let a = dcg.cell(1);
-    let b = dcg.cell(2);
+    let radius = circle.cell(1.0);
 
-    let add_ab = || dcg.get(a) + dcg.get(b);
-    let thunk1 = dcg.thunk(&add_ab, &[a, b]);
+    let get_circum = || 2.0 * PI * radius.get();
+    let circumference = circle.memo(&get_circum, &[radius]);
 
-    let add_one = || dcg.get(thunk1) + 1;
-    let thunk2 = dcg.thunk(&add_one, &[thunk1]);
+    let get_area = || {
+        let r = radius.get();
+        PI * r * r
+    };
+    let area = circle.memo(&get_area, &[radius]);
 
-    let add_two = || dcg.get(thunk1) + 2;
-    let thunk3 = dcg.thunk(&add_two, &[thunk1]);
+    let canvas = Dcg::new();
+    let position = canvas.cell((0.0, 0.0));
 
-    let two_times_thunk_plus_three = || dcg.get(thunk2) + dcg.get(thunk3);
-    let tttpt = dcg.thunk(&two_times_thunk_plus_three, &[thunk2, thunk3]);
+    let get_leftmost_point = || {
+        let pos = position.get();
+        (pos.0 - radius.query(), pos.1)
+    };
+    let leftmost_point = canvas.memo(&get_leftmost_point, &[position]);
 
-    dcg.set(a, 2);
+    circumference.query();
+    area.query();
+    leftmost_point.query();
 
-    dcg.compute(tttpt);
+    // radius.set(2.0);
 
-    println!("{:?}", Dot::new(&*dcg.borrow()));
+    println!(
+        "{:?}",
+        // Dot::new(&*circle.borrow()),
+        Dot::new(&*canvas.borrow())
+    );
 }
