@@ -14,8 +14,8 @@ fn bench_additions(c: &mut Criterion) {
 
     // Do benchmarking
     let mut group = c.benchmark_group("Concatenation");
-    group.bench_function("Memo Concat", |b| b.iter(|| dcg.get(memo)));
-    group.bench_function("Thunk Concat", |b| b.iter(|| dcg.get(thunk)));
+    group.bench_function("Memo Concat", |b| b.iter(|| dcg.compute(memo)));
+    group.bench_function("Thunk Concat", |b| b.iter(|| dcg.compute(thunk)));
     group.bench_function("Raw Concat", |b| {
         b.iter(|| format!("{} {}", "something".to_string(), "borrowed".to_string()))
     });
