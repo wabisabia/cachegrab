@@ -430,9 +430,9 @@ where
         let mut dirty_edges = Vec::new();
         {
             let dcg = self.borrow();
-            let rev_dfs = Reversed(&*dcg);
-            let mut dfs = Dfs::new(rev_dfs, node.into());
-            while let Some(node) = dfs.next(&*dcg) {
+            let rev_dcg = Reversed(&*dcg);
+            let mut dfs = Dfs::new(rev_dcg, node.into());
+            while let Some(node) = dfs.next(rev_dcg) {
                 let mut edges = self.borrow().neighbors_directed(node, Incoming).detach();
                 while let Some(edge) = edges.next_edge(&*dcg) {
                     dirty_edges.push(edge);
@@ -717,12 +717,39 @@ mod tests {
 
         dcg.set(a, 2);
 
-        assert_eq!(dcg.compute(a), 2);
+        assert_eq!(dcg.compute(thunk), 2);
 
         let graph = dcg.borrow();
 
         assert!(!*graph
             .edge_weight(graph.find_edge(a.into(), thunk.into()).unwrap())
+            .unwrap());
+    }
+
+    #[test]
+    fn cleaning_phase_two_layers() {
+        let dcg = Dcg::new();
+
+        let a = dcg.cell(1);
+
+        let get_a = || dcg.get(a);
+        let b = dcg.thunk(&get_a, &[a]);
+
+        let get_b = || dcg.get(b);
+        let c = dcg.thunk(&get_b, &[b]);
+
+        dcg.set(a, 2);
+
+        dcg.compute(c);
+
+        let graph = dcg.borrow();
+
+        assert!(!*graph
+            .edge_weight(graph.find_edge(b.into(), c.into()).unwrap())
+            .unwrap());
+
+        assert!(!*graph
+            .edge_weight(graph.find_edge(a.into(), b.into()).unwrap())
             .unwrap());
     }
 }
