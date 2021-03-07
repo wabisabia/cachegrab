@@ -1,11 +1,12 @@
-//! Provides a struct [`Dcg`], which can be used to create and compose Dynamic
+//! Provides tools for for building and editing Dynamic
 //! Computation Graphs (DCGs).
 //!
 //! # Concepts
 //!
-//! ## Nodes
+//! ## DCG
 //!
-//! Fundamentally, a [`Dcg`] handles the instantiation of [`DcgNode`]s.
+//! Fundamentally, a [`Dcg`] handles the instantiation of [`DcgNode`]s and
+//! manages interdependencies.
 //!
 //! [`DcgNode`]s are one of three types:
 //!
@@ -18,7 +19,7 @@
 //! and explicitly** upon instantiation. A [`Dcg`] stores this dependency data
 //! and manages it to optimise computations.
 //!
-//! ## "Dirtiness"
+//! ## "Dirty" nodes and edges
 //!
 //! It may be helpful to view dirtiness through the lens of cache validity.
 //!
@@ -110,14 +111,26 @@
 //! let d = dcg.thunk(&add_c_constant, &[c, constant]);
 //! assert_eq!(d.query(), 6);
 //! ```
+//! A [`Cell`]'s value can be changed with [`DcgNode::set`], yielding
+//! the cell's previous value:
+//! ```
+//! # use dcg::Dcg;
+//! # let dcg = Dcg::new();
+//! # let a = dcg.cell(1);
+//! # let b = dcg.cell(2);
+//! # let add_ab = || a.get() + b.get();
+//! # let c = dcg.thunk(&add_ab, &[a, b]);
+//! # let three = || 3;
+//! # let constant = dcg.lone_thunk(&three);
+//! # let add_c_constant = || c.get() + constant.get();
+//! # let d = dcg.thunk(&add_c_constant, &[c, constant]);
+//! # assert_eq!(d.query(), 6);
+//! assert_eq!(a.set(3), 1);
+//! ```
 use std::{cell::RefCell, fmt::Debug, marker::PhantomData, ops::Deref, ops::DerefMut};
 
-use petgraph::{
-    graph::{DiGraph, NodeIndex},
-    visit::{depth_first_search, DfsEvent, EdgeRef},
-};
-use petgraph::{visit::Dfs, visit::Reversed, Direction};
-use Direction::Incoming;
+use petgraph::{graph::DiGraph, graph::NodeIndex, visit::EdgeRef, EdgeDirection::Incoming};
+use petgraph::{visit::Dfs, visit::Reversed};
 
 /// Internal graph node type. Stores the type and data of a [`Dcg`] graph node.
 #[derive(Clone)]
@@ -187,20 +200,45 @@ where
         self.graph.borrow()[self.idx].clone()
     }
 
+    /// Returns [`true`] if the node is dirty and [`false`] otherwise.
+    ///
+    /// [`DcgNode<Cell>`] is dirty if the value contained is a [`Result::Err`].
+    /// [`DcgNode<Thunk>`] and [`DcgNode<Memo>`] are dirty if at least one
+    /// dirty edge terminates at the node.
     pub fn is_dirty(&self) -> bool {
         let dcg = self.graph.borrow();
         match &dcg[self.idx] {
             Node::Cell(result) => result.is_err(),
             _ => dcg
-                .edges_directed(self.idx, Direction::Incoming)
+                .edges_directed(self.idx, Incoming)
                 .any(|edge| *edge.weight()),
         }
     }
 
+    /// Returns [`true`] if the node is clean and [`false`] otherwise.
+    ///
+    /// [`DcgNode<Cell>`] is clean if the value contained is a [`Result::Ok`].
+    /// [`DcgNode<Thunk>`] and [`DcgNode<Memo>`] are clean if no dirty edges
+    /// terminate at node.
     pub fn is_clean(&self) -> bool {
         !self.is_dirty()
     }
 
+    /// Generates the node's value and cleans the node.
+    ///
+    /// This function should only be used within closures passed to
+    /// [`Dcg::thunk`] or [`Dcg::memo`] or their `Dcg::lone_*` counterparts.
+    ///
+    /// If the node is a cell, this will return the value stored in its
+    /// [`Result`] and ensure that the final inner result is wrapped in a
+    /// [`Result::Ok`].
+    ///
+    /// If the node is a thunk, the closure stored will always be executed and
+    /// returned.
+    ///
+    /// If the node is a memo'd thunk, the cached value is returned if the
+    /// node is clean, otherwise the closure is executed and the result is
+    /// cached and returned.
     pub fn get(&self) -> T {
         let inner_node = self.inner_node();
         if self.is_clean() {
@@ -224,6 +262,57 @@ where
         }
     }
 
+    /// Generates the node's value and cleans all transitive dependencies.
+    ///
+    /// This is the intended interface for retrieving DCG values.
+    ///
+    /// A Depth-First-Search is performed on the reversed graph edges. Dirty
+    /// edges are collected. The desired value is then generated and returned
+    /// after the dirty edges are cleaned.
+    ///
+    /// # Examples
+    /// ```
+    /// use dcg::Dcg;
+    ///
+    /// let dcg = Dcg::new();
+    ///
+    /// let cell = dcg.cell(1);
+    ///
+    /// let get_cell = || cell.get();
+    /// let thunk1 = dcg.thunk(&get_cell, &[cell]);
+    /// let thunk2 = dcg.thunk(&get_cell, &[cell]);
+    /// let get_thunk1 = || thunk1.get();
+    /// let thunk3 = dcg.thunk(&get_thunk1, &[thunk1]);
+    ///
+    /// assert_eq!(cell.set(42), 1);
+    ///
+    /// /* BEFORE: all edges dirtied
+    /// *
+    /// *      thunk1 == thunk3
+    /// *    //
+    /// *   cell
+    /// *    \\
+    /// *      thunk2
+    /// */
+    ///
+    /// assert_eq!(thunk3.query(), 42);
+    ///
+    /// /* AFTER: dependency edges cleaned
+    /// *
+    /// *     thunk1 -- thunk3
+    /// *    /
+    /// *   cell
+    /// *    \\
+    /// *      thunk2
+    /// */
+    ///
+    /// let graph = dcg.borrow();
+    ///
+    /// assert!(!graph[graph.find_edge(cell.into(), thunk1.into()).unwrap()]);
+    /// assert!(!graph[graph.find_edge(thunk1.into(), thunk3.into()).unwrap()]);
+    /// assert!(graph[graph.find_edge(cell.into(), thunk2.into()).unwrap()]);
+    ///
+    /// ```
     pub fn query(&self) -> T {
         let mut dirty_edges = Vec::new();
         {
@@ -252,7 +341,7 @@ impl<T> DcgNode<'_, T, Cell>
 where
     T: Clone + PartialEq + Debug,
 {
-    /// Sets the [`DcgNode`}'s value to `new_value`, "dirtying" all dependent
+    /// Sets the [`DcgNode`]'s value to `new_value`, "dirtying" all dependent
     /// nodes.
     ///
     /// This method dirties all nodes that are transitively dependent on
@@ -272,9 +361,9 @@ where
     /// // Compile error! set can only be called on cells
     /// thunk.set(1);
     /// ```
-    ///
     /// The dirtying phase performs a Depth-First-Search from `node` and sets
-    /// the weight of each tree/cross edge encountered to [`true`]
+    /// the weight of each edge encountered to [`true`]
+    ///
     /// # Examples
     /// ```
     /// use dcg::Dcg;
@@ -293,10 +382,12 @@ where
     /// *
     /// *     thunk1 -- thunk3
     /// *    /
-    /// *   a
+    /// *   cell
     /// *    \
     /// *     thunk2
     /// */
+    ///
+    /// assert!(!dcg.borrow_mut().edge_weights_mut().all(|weight| *weight));
     ///
     /// assert_eq!(cell.set(42), 1);
     ///
@@ -304,14 +395,12 @@ where
     /// *
     /// *      thunk1 == thunk3
     /// *    //
-    /// *   a
+    /// *   cell
     /// *    \\
     /// *      thunk2
     /// */
     ///
-    /// assert_eq!(cell.get(), 42);
-    ///
-    /// assert!(dcg.borrow().raw_edges().iter().all(|edge| edge.weight));
+    /// assert!(dcg.borrow_mut().edge_weights_mut().all(|weight| *weight));
     /// ```
     pub fn set(&self, new_value: T) -> T {
         let value = match &mut self.graph.borrow_mut()[self.idx] {
@@ -332,24 +421,23 @@ where
             _ => unreachable!(),
         };
 
-        let mut transitive_edges = Vec::new();
+        let mut edges_to_dirty = Vec::new();
         {
             let dcg = self.graph.borrow();
-            depth_first_search(&*dcg, Some(self.idx), |event| {
-                let uv = match event {
-                    DfsEvent::TreeEdge(u, v) => Some((u, v)),
-                    DfsEvent::CrossForwardEdge(u, v) => Some((u, v)),
-                    _ => None,
-                };
-                match uv {
-                    Some((u, v)) => transitive_edges.push(dcg.find_edge(u, v).unwrap()),
-                    None => (),
-                }
-            });
+            let mut dfs = Dfs::new(&*dcg, self.idx);
+            while let Some(node) = dfs.next(&*dcg) {
+                edges_to_dirty.extend(dcg.edges(node).filter_map(|edge| {
+                    if *edge.weight() {
+                        None
+                    } else {
+                        Some(edge.id())
+                    }
+                }));
+            }
         }
 
         let mut dcg = self.graph.borrow_mut();
-        transitive_edges.iter().for_each(|&edge| {
+        edges_to_dirty.iter().for_each(|&edge| {
             dcg[edge] = true;
         });
         value
@@ -657,9 +745,9 @@ mod tests {
             assert_eq!(graph.node_count(), 2);
 
             assert!(graph.contains_edge(a.into(), thunk.into()));
-
-            assert!(!graph.raw_edges().iter().any(|edge| edge.weight));
         }
+
+        assert!(!dcg.borrow_mut().edge_weights_mut().any(|weight| *weight));
 
         assert_eq!(thunk.query(), 1);
     }
@@ -679,9 +767,9 @@ mod tests {
             assert_eq!(graph.node_count(), 2);
 
             assert!(graph.contains_edge(a.into(), memo.into()));
-
-            assert!(!graph.raw_edges().iter().any(|edge| edge.weight));
         }
+
+        assert!(!dcg.borrow_mut().edge_weights_mut().any(|weight| *weight));
 
         assert_eq!(memo.query(), 1);
     }
@@ -731,9 +819,9 @@ mod tests {
             assert!(graph.contains_edge(a.into(), thunk2.into()));
             assert!(graph.contains_edge(thunk1.into(), thunk3.into()));
             assert!(graph.contains_edge(thunk2.into(), thunk3.into()));
-
-            assert!(!graph.raw_edges().iter().any(|edge| edge.weight));
         }
+
+        assert!(!dcg.borrow_mut().edge_weights_mut().any(|weight| *weight));
 
         assert_eq!(thunk1.query(), 1);
         assert_eq!(thunk2.query(), 1);
@@ -753,6 +841,9 @@ mod tests {
 
         assert_eq!(a.set(2), 1);
 
+        assert!(a.is_dirty());
+        assert!(thunk.is_dirty());
+
         let graph = dcg.borrow();
 
         assert!(graph[graph.find_edge(a.into(), thunk.into()).unwrap()]);
@@ -770,6 +861,9 @@ mod tests {
         a.set(2);
 
         assert_eq!(thunk.query(), 2);
+
+        assert!(a.is_clean());
+        assert!(thunk.is_clean());
 
         let graph = dcg.borrow();
 
