@@ -114,7 +114,7 @@ use std::{cell::RefCell, fmt::Debug, marker::PhantomData, ops::Deref, ops::Deref
 
 use petgraph::{
     graph::{DiGraph, NodeIndex},
-    visit::{depth_first_search, DfsEvent},
+    visit::{depth_first_search, DfsEvent, EdgeRef},
 };
 use petgraph::{visit::Dfs, visit::Reversed, Direction};
 use Direction::Incoming;
@@ -231,10 +231,13 @@ where
             let rev_dcg = Reversed(&*dcg);
             let mut dfs = Dfs::new(rev_dcg, self.idx);
             while let Some(node) = dfs.next(rev_dcg) {
-                let mut edges = dcg.neighbors_directed(node, Incoming).detach();
-                while let Some(edge) = edges.next_edge(&*dcg) {
-                    dirty_edges.push(edge);
-                }
+                dirty_edges.extend(dcg.edges_directed(node, Incoming).filter_map(|edge| {
+                    if *edge.weight() {
+                        Some(edge.id())
+                    } else {
+                        None
+                    }
+                }));
             }
         }
         let value = self.get();
