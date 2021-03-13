@@ -134,16 +134,16 @@ use petgraph::{visit::Dfs, visit::Reversed};
 
 /// Internal graph node type. Stores the type and data of a [`Dcg`] graph node.
 #[derive(Clone)]
-pub enum Node<'a, T>
+pub enum DcgData<'a, T>
 where
-    T: Clone + PartialEq + Debug,
+    T: PartialEq + Clone + Debug,
 {
     /// Contains a value of type [`Result<T ,T>`].
     ///
     /// The underlying value may be retrieved or replaced by calling
     /// [`DcgNode::get`] or [`DcgNode::set`] on the corresponding
     /// [`DcgNode<Cell>`].
-    Cell(Result<T, T>),
+    Cell(T, bool),
 
     /// Contains a thunk which produces a value of type `T`.
     ///
@@ -185,7 +185,7 @@ pub struct Memo {}
 /// [`From<DcgNode>`] implementation.
 pub struct DcgNode<'a, T, Ty>
 where
-    T: Clone + PartialEq + Debug,
+    T: PartialEq + Clone + Debug,
 {
     graph: &'a GraphRepr<'a, T>,
     idx: NodeIndex,
@@ -194,9 +194,9 @@ where
 
 impl<T, Ty> DcgNode<'_, T, Ty>
 where
-    T: Clone + PartialEq + Debug,
+    T: PartialEq + Clone + Debug,
 {
-    fn inner_node(&self) -> Node<'_, T> {
+    fn inner_node(&self) -> DcgData<'_, T> {
         self.graph.borrow()[self.idx].clone()
     }
 
@@ -208,7 +208,7 @@ where
     pub fn is_dirty(&self) -> bool {
         let dcg = self.graph.borrow();
         match &dcg[self.idx] {
-            Node::Cell(result) => result.is_err(),
+            DcgData::Cell(_, dirty) => *dirty,
             _ => dcg
                 .edges_directed(self.idx, Incoming)
                 .any(|edge| *edge.weight()),
@@ -243,20 +243,20 @@ where
         let inner_node = self.inner_node();
         if self.is_clean() {
             match inner_node {
-                Node::Cell(result) => result.unwrap(),
-                Node::Thunk(thunk) => thunk(),
-                Node::Memo(_, value) => value,
+                DcgData::Cell(value, _) => value,
+                DcgData::Thunk(thunk) => thunk(),
+                DcgData::Memo(_, value) => value,
             }
         } else {
             let value = match inner_node {
-                Node::Cell(result) => result.unwrap_err(),
-                Node::Thunk(thunk) => thunk(),
-                Node::Memo(thunk, _) => thunk(),
+                DcgData::Cell(value, _) => value,
+                DcgData::Thunk(thunk) => thunk(),
+                DcgData::Memo(thunk, _) => thunk(),
             };
             match &mut self.graph.borrow_mut()[self.idx] {
-                Node::Cell(result) => *result = Ok(value.clone()),
-                Node::Thunk(_) => (),
-                Node::Memo(_, cached) => *cached = value.clone(),
+                DcgData::Cell(_, ref mut dirty) => *dirty = false,
+                DcgData::Thunk(_) => (),
+                DcgData::Memo(_, cached) => *cached = value.clone(),
             };
             value
         }
@@ -339,7 +339,7 @@ where
 
 impl<T> DcgNode<'_, T, Cell>
 where
-    T: Clone + PartialEq + Debug,
+    T: PartialEq + Clone + Debug,
 {
     /// Sets the [`DcgNode`]'s value to `new_value`, "dirtying" all dependent
     /// nodes.
@@ -404,18 +404,13 @@ where
     /// ```
     pub fn set(&self, new_value: T) -> T {
         let value = match &mut self.graph.borrow_mut()[self.idx] {
-            Node::Cell(ref mut result) => {
-                let value = match result {
-                    Ok(value) => {
-                        if *value == new_value {
-                            return new_value;
-                        }
-                        value
-                    }
-                    Err(value) => value,
-                };
+            DcgData::Cell(ref mut value, ref mut dirty) => {
+                if *value == new_value {
+                    return new_value;
+                }
+                *dirty = true;
                 let tmp = value.clone();
-                *result = Err(new_value);
+                *value = new_value;
                 tmp
             }
             _ => unreachable!(),
@@ -448,7 +443,7 @@ where
 /// [`PhantomData`]
 impl<T, Ty> Clone for DcgNode<'_, T, Ty>
 where
-    T: Clone + PartialEq + Debug,
+    T: PartialEq + Clone + Debug,
 {
     fn clone(&self) -> Self {
         Self { ..*self }
@@ -457,31 +452,33 @@ where
 
 /// Workaround for a [bug](https://github.com/rust-lang/rust/issues/26925) in
 /// [`PhantomData`]
-impl<T, Ty> Copy for DcgNode<'_, T, Ty> where T: Clone + PartialEq + Debug {}
+impl<T, Ty> Copy for DcgNode<'_, T, Ty> where T: PartialEq + Clone + Debug {}
 
 impl<T, Ty> From<DcgNode<'_, T, Ty>> for NodeIndex
 where
-    T: Clone + PartialEq + Debug,
+    T: PartialEq + Clone + Debug,
 {
     fn from(node: DcgNode<'_, T, Ty>) -> Self {
         node.idx
     }
 }
 
-impl<T> Debug for Node<'_, T>
+impl<T> Debug for DcgData<'_, T>
 where
-    T: Clone + PartialEq + Debug,
+    T: PartialEq + Clone + Debug,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            Node::Cell(value) => write!(f, "{:?}", value),
-            Node::Thunk(_) => f.debug_tuple("Thunk").finish(),
-            Node::Memo(_, last_value) => f.debug_tuple("Memo").field(&last_value).finish(),
+            DcgData::Cell(value, dirty) => {
+                f.debug_tuple("Cell").field(&value).field(&dirty).finish()
+            }
+            DcgData::Thunk(_) => f.debug_tuple("Thunk").finish(),
+            DcgData::Memo(_, last_value) => f.debug_tuple("Memo").field(&last_value).finish(),
         }
     }
 }
 
-type GraphRepr<'a, T> = RefCell<DiGraph<Node<'a, T>, bool>>;
+type GraphRepr<'a, T> = RefCell<DiGraph<DcgData<'a, T>, bool>>;
 
 /// The central data structure responsible for vending [`DcgNode`]s and
 /// maintaining dependency information.
@@ -494,11 +491,11 @@ type GraphRepr<'a, T> = RefCell<DiGraph<Node<'a, T>, bool>>;
 ///
 pub struct Dcg<'a, T>(pub GraphRepr<'a, T>)
 where
-    T: Clone + PartialEq + Debug;
+    T: PartialEq + Clone + Debug;
 
 impl<'a, T> Deref for Dcg<'a, T>
 where
-    T: Clone + PartialEq + Debug,
+    T: PartialEq + Clone + Debug,
 {
     type Target = GraphRepr<'a, T>;
 
@@ -509,7 +506,7 @@ where
 
 impl<'a, T> DerefMut for Dcg<'a, T>
 where
-    T: Clone + PartialEq + Debug,
+    T: PartialEq + Clone + Debug,
 {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
@@ -518,7 +515,7 @@ where
 
 impl<'a, T> Dcg<'a, T>
 where
-    T: Clone + PartialEq + Debug,
+    T: PartialEq + Clone + Debug,
 {
     /// Creates an empty DCG.
     /// # Examples
@@ -564,7 +561,7 @@ where
     pub fn cell(&'a self, value: T) -> DcgNode<'a, T, Cell> {
         DcgNode {
             graph: &self.0,
-            idx: self.borrow_mut().add_node(Node::Cell(Ok(value))),
+            idx: self.borrow_mut().add_node(DcgData::Cell(value, false)),
             phantom: PhantomData,
         }
     }
@@ -615,7 +612,7 @@ where
     ///
     /// # Examples
     /// ```
-    /// use dcg::{Dcg, Node};
+    /// use dcg::{Dcg, DcgData};
     ///
     /// let dcg = Dcg::new();
     ///
@@ -634,7 +631,7 @@ where
     /// assert_eq!(memo.get(), cell.get());
     ///
     /// match graph[memo_idx] {
-    ///     Node::Memo(_, value) => assert_eq!(value, 1),
+    ///     DcgData::Memo(_, value) => assert_eq!(value, 1),
     ///     _ => (),
     /// };
     /// ```
@@ -671,7 +668,7 @@ where
     {
         DcgNode {
             graph: &self.0,
-            idx: self.borrow_mut().add_node(Node::Thunk(thunk)),
+            idx: self.borrow_mut().add_node(DcgData::Thunk(thunk)),
             phantom: PhantomData,
         }
     }
@@ -683,7 +680,7 @@ where
     /// is not the case, instead use [`Dcg::memo`].
     /// # Examples
     /// ```
-    /// use dcg::{Dcg, Node};
+    /// use dcg::{Dcg, DcgData};
     /// use petgraph::graph::NodeIndex;
     ///
     /// let dcg = Dcg::new();
@@ -698,7 +695,7 @@ where
     /// let memo_idx: NodeIndex = memo.into();
     ///
     /// match dcg.borrow()[memo_idx] {
-    ///     Node::Memo(_, value) => assert_eq!(value, 42),
+    ///     DcgData::Memo(_, value) => assert_eq!(value, 42),
     ///     _ => (),
     /// };
     /// ```
@@ -709,7 +706,7 @@ where
         let value = thunk();
         DcgNode {
             graph: &self.0,
-            idx: self.borrow_mut().add_node(Node::Memo(thunk, value)),
+            idx: self.borrow_mut().add_node(DcgData::Memo(thunk, value)),
             phantom: PhantomData,
         }
     }
