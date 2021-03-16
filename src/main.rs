@@ -8,33 +8,28 @@ fn main() {
 
     let radius = circle.cell(1.0);
 
-    let get_circum = || 2.0 * PI * radius.get();
-    let circumference = circle.memo(&get_circum, &[radius]);
+    let calc_circum = || 2.0 * PI * radius.get();
+    let circumference = circle.memo(&calc_circum, &[radius.idx]);
 
-    let get_area = || {
+    let calc_area = || {
         let r = radius.get();
         PI * r * r
     };
-    let area = circle.memo(&get_area, &[radius]);
+    let area = circle.memo(&calc_area, &[radius.idx]);
 
-    let canvas = Dcg::new();
-    let position = canvas.cell((0.0, 0.0));
+    let position = circle.cell((0.0, 0.0));
 
-    let get_leftmost_point = || {
-        let pos = position.get();
-        (pos.0 - radius.query(), pos.1)
+    let calc_left_border = || {
+        let (x, y) = position.get();
+        (x - radius.get(), y)
     };
-    let leftmost_point = canvas.memo(&get_leftmost_point, &[position]);
+    let left_border = circle.memo(&calc_left_border, &[position.idx]);
 
     circumference.query();
     area.query();
-    leftmost_point.query();
+    left_border.query();
 
     // radius.set(2.0);
 
-    println!(
-        "{:?}",
-        // Dot::new(&*circle.borrow()),
-        Dot::new(&*canvas.borrow())
-    );
+    println!("{:?}", Dot::new(&*circle.graph.borrow()));
 }
