@@ -640,6 +640,11 @@ mod tests {
 
         assert_eq!(radius.set(2.0), 1.0);
 
+        assert!(radius.dirty());
+        assert!(area.dirty());
+        assert!(circum.dirty());
+        assert!(left_bound.dirty());
+
         assert_eq!(area.query(), 4.0 * std::f64::consts::PI);
         assert_eq!(circum.query(), 4.0 * std::f64::consts::PI);
         assert_eq!(left_bound.query(), (-2.0, 0.0));
