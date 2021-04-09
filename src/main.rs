@@ -1,35 +1,73 @@
-use std::f32::consts::PI;
+use std::rc::Rc;
 
-use dcg::Dcg;
+use dcg::{CellTy, Dcg, DcgNode, MemoTy};
 use petgraph::dot::Dot;
 
+struct Circle {
+    dcg: Dcg,
+    radius: Rc<DcgNode<f64, CellTy>>,
+    circumference: DcgNode<f64, MemoTy>,
+    area: DcgNode<f64, MemoTy>,
+}
+
+impl Circle {
+    pub fn from_radius(radius: f64) -> Self {
+        let dcg = Dcg::new();
+
+        let radius = dcg.cell(radius);
+
+        let radius1 = radius.clone();
+        let calc_circum = Rc::new(move || 2.0 * std::f64::consts::PI * radius1.get());
+        let circumference = dcg.memo(calc_circum, &[radius.idx]);
+
+        let radius2 = radius.clone();
+        let calc_area = Rc::new(move || {
+            let r = radius2.get();
+            std::f64::consts::PI * r * r
+        });
+        let area = dcg.memo(calc_area, &[radius.idx]);
+
+        Circle {
+            dcg,
+            radius,
+            circumference,
+            area,
+        }
+    }
+
+    pub fn radius(&self) -> f64 {
+        self.radius.query()
+    }
+
+    pub fn circumference(&self) -> f64 {
+        self.circumference.query()
+    }
+
+    pub fn area(&self) -> f64 {
+        self.area.query()
+    }
+}
+
 fn main() {
-    let circle = Dcg::new();
+    let circle = Circle::from_radius(1.);
 
-    let radius = circle.cell(1.0);
+    println!(
+        "{} {} {}",
+        circle.radius(),
+        circle.circumference(),
+        circle.area()
+    );
 
-    let calc_circum = || 2.0 * PI * radius.get();
-    let circumference = circle.memo(&calc_circum, &[radius.idx]);
+    circle.radius.set(2.);
 
-    let calc_area = || {
-        let r = radius.get();
-        PI * r * r
-    };
-    let area = circle.memo(&calc_area, &[radius.idx]);
+    println!("{:?}", Dot::new(&*circle.dcg.graph.borrow()));
 
-    let position = circle.cell((0.0, 0.0));
+    println!(
+        "{} {} {}",
+        circle.radius(),
+        circle.circumference(),
+        circle.area()
+    );
 
-    let calc_left_border = || {
-        let (x, y) = position.get();
-        (x - radius.get(), y)
-    };
-    let left_border = circle.memo(&calc_left_border, &[position.idx]);
-
-    circumference.query();
-    area.query();
-    left_border.query();
-
-    // radius.set(2.0);
-
-    println!("{:?}", Dot::new(&*circle.graph.borrow()));
+    println!("{:?}", Dot::new(&*circle.dcg.graph.borrow()));
 }

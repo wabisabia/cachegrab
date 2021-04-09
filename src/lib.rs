@@ -1,22 +1,23 @@
-use std::{cell::RefCell, marker::PhantomData};
+use std::{cell::RefCell, marker::PhantomData, rc::Rc};
 
 use petgraph::{
     graph::{DiGraph, NodeIndex},
     visit::Dfs,
     visit::EdgeRef,
+    visit::IntoEdges,
     visit::Reversed,
     EdgeDirection::Incoming,
 };
 
 pub struct Dcg {
-    pub graph: GraphRepr,
+    pub graph: Rc<RefCell<GraphRepr>>,
 }
 
-type GraphRepr = RefCell<DiGraph<(), bool>>;
+type GraphRepr = DiGraph<(), bool>;
 
 /// Internal graph node type. Stores the type and data of a [`Dcg`] graph node.
 #[derive(Clone)]
-pub enum DcgData<'a, T> {
+pub enum DcgData<T> {
     /// Contains a value of type [`Result<T ,T>`].
     ///
     /// The underlying value may be retrieved or replaced by calling
@@ -28,7 +29,7 @@ pub enum DcgData<'a, T> {
     ///
     /// The result of the thunk may be retrieved by calling [`DcgNode::get`] on
     /// the corresponding [`DcgNode<Thunk>`].
-    Thunk(&'a dyn Fn() -> T),
+    Thunk(Rc<dyn Fn() -> T>),
 
     /// Contains a thunk which produces a value of type `T` and a cached value
     /// of type `T` which holds the result of the previous evaluation of the
@@ -39,57 +40,52 @@ pub enum DcgData<'a, T> {
     /// - If any dependency is dirty, the [`DcgNode<Memo>`] is dirty and thunk
     /// is re-evaluated, cached and returned.
     /// - Otherwise, the cached value is returned.
-    Memo(&'a dyn Fn() -> T, T),
+    Memo(Rc<dyn Fn() -> T>, T),
 }
 
 impl Dcg {
     pub fn new() -> Self {
         Dcg {
-            graph: RefCell::new(DiGraph::new()),
+            graph: Rc::new(RefCell::new(DiGraph::new())),
         }
     }
 
-    pub fn cell<T>(&self, value: T) -> DcgNode<T, Cell> {
-        DcgNode {
+    pub fn cell<T>(&self, value: T) -> Rc<DcgNode<T, CellTy>> {
+        Rc::new(DcgNode {
             idx: self.graph.borrow_mut().add_node(()),
-            graph: &self.graph,
+            graph: self.graph.clone(),
             data: RefCell::new(DcgData::Cell(value, true)),
             phantom: PhantomData,
-        }
+        })
     }
 
-    pub fn thunk<'a, T, F>(
+    pub fn thunk<'a, T>(
         &'a self,
-        thunk: &'a F,
+        thunk: Rc<dyn Fn() -> T>,
         dependencies: &[NodeIndex],
-    ) -> DcgNode<'a, T, Thunk>
-    where
-        F: Fn() -> T,
-    {
+    ) -> DcgNode<T, ThunkTy> {
         let idx = self.graph.borrow_mut().add_node(());
         self.add_dependencies(idx, dependencies);
         DcgNode {
             idx,
-            graph: &self.graph,
+            graph: self.graph.clone(),
             data: RefCell::new(DcgData::Thunk(thunk)),
             phantom: PhantomData,
         }
     }
 
-    pub fn memo<'a, T, F>(
+    pub fn memo<'a, T>(
         &'a self,
-        thunk: &'a F,
+        thunk: Rc<dyn Fn() -> T>,
         dependencies: &[NodeIndex],
-    ) -> DcgNode<'a, T, Memo>
-    where
-        F: Fn() -> T,
-    {
+    ) -> DcgNode<T, MemoTy> {
         let idx = self.graph.borrow_mut().add_node(());
         self.add_dependencies(idx, dependencies);
+        let value = thunk();
         DcgNode {
             idx,
-            graph: &self.graph,
-            data: RefCell::new(DcgData::Memo(thunk, thunk())),
+            graph: self.graph.clone(),
+            data: RefCell::new(DcgData::Memo(thunk, value)),
             phantom: PhantomData,
         }
     }
@@ -101,55 +97,44 @@ impl Dcg {
         });
     }
 
-    pub fn lone_thunk<'a, T, F>(&'a self, thunk: &'a F) -> DcgNode<'a, T, Thunk>
-    where
-        F: Fn() -> T,
-    {
+    pub fn lone_thunk<'a, T>(&'a self, thunk: Rc<dyn Fn() -> T>) -> DcgNode<T, ThunkTy> {
         DcgNode {
             idx: self.graph.borrow_mut().add_node(()),
-            graph: &self.graph,
+            graph: self.graph.clone(),
             data: RefCell::new(DcgData::Thunk(thunk)),
             phantom: PhantomData,
         }
     }
 
-    pub fn lone_memo<'a, T, F>(&'a self, thunk: &'a F) -> DcgNode<'a, T, Memo>
-    where
-        F: Fn() -> T,
-    {
+    pub fn lone_memo<'a, T>(&'a self, thunk: Rc<dyn Fn() -> T>) -> DcgNode<T, MemoTy> {
+        let value = thunk();
         DcgNode {
             idx: self.graph.borrow_mut().add_node(()),
-            graph: &self.graph,
-            data: RefCell::new(DcgData::Memo(thunk, thunk())),
+            graph: self.graph.clone(),
+            data: RefCell::new(DcgData::Memo(thunk, value)),
             phantom: PhantomData,
         }
     }
 }
 
-pub struct DcgNode<'a, T, Ty>
-where
-    Ty: DcgTy,
-{
+#[derive(Clone)]
+pub struct DcgNode<T, Ty> {
     pub idx: NodeIndex,
-    graph: &'a GraphRepr,
-    data: RefCell<DcgData<'a, T>>,
+    graph: Rc<RefCell<GraphRepr>>,
+    data: RefCell<DcgData<T>>,
     phantom: PhantomData<Ty>,
 }
 
-pub trait DcgTy {}
+#[derive(Clone)]
+pub struct CellTy;
+#[derive(Clone)]
+pub struct ThunkTy;
+#[derive(Clone)]
+pub struct MemoTy;
 
-pub struct Cell;
-pub struct Thunk;
-pub struct Memo;
-
-impl DcgTy for Cell {}
-impl DcgTy for Thunk {}
-impl DcgTy for Memo {}
-
-impl<T, Ty> DcgNode<'_, T, Ty>
+impl<T, Ty> DcgNode<T, Ty>
 where
     T: Clone,
-    Ty: DcgTy,
 {
     /// Generates the node's value and cleans the node.
     ///
@@ -167,14 +152,13 @@ where
     /// node is clean, otherwise the closure is executed and the result is
     /// cached and returned.
     pub fn get(&self) -> T {
-        use DcgData::*;
         match *self.data.borrow_mut() {
-            Cell(ref mut value, ref mut dirty) => {
+            DcgData::Cell(ref mut value, ref mut dirty) => {
                 *dirty = false;
                 value.clone()
             }
-            Thunk(thunk) => thunk(),
-            Memo(thunk, ref mut cached) => {
+            DcgData::Thunk(ref thunk) => thunk(),
+            DcgData::Memo(ref thunk, ref mut cached) => {
                 if self
                     .graph
                     .borrow()
@@ -202,16 +186,19 @@ where
     /// # Examples
     /// ```
     /// use dcg::Dcg;
+    /// use std::rc::Rc;
     ///
     /// let dcg = Dcg::new();
     ///
     /// let cell = dcg.cell(1);
     ///
-    /// let get_cell = || cell.get();
-    /// let thunk1 = dcg.thunk(&get_cell, &[cell.idx]);
-    /// let thunk2 = dcg.thunk(&get_cell, &[cell.idx]);
-    /// let get_thunk1 = || thunk1.get();
-    /// let thunk3 = dcg.thunk(&get_thunk1, &[thunk1.idx]);
+    /// let cell1 = cell.clone();
+    /// let get_cell = Rc::new(move || cell1.get());
+    /// let thunk1 = dcg.thunk(get_cell.clone(), &[cell.idx]);
+    /// let thunk2 = dcg.thunk(get_cell, &[cell.idx]);
+    /// let thunk11 = thunk1.clone();
+    /// let get_thunk1 = Rc::new(move || thunk11.get());
+    /// let thunk3 = dcg.thunk(get_thunk1, &[thunk1.idx]);
     ///
     /// assert_eq!(cell.set(42), 1);
     ///
@@ -243,13 +230,33 @@ where
     ///
     /// ```
     pub fn query(&self) -> T {
+        let mut data = self.data.borrow_mut();
+        let thunk = match *data {
+            DcgData::Cell(ref mut value, ref mut dirty) => {
+                *dirty = false;
+                return value.clone();
+            }
+            DcgData::Thunk(ref mut thunk) => thunk,
+            DcgData::Memo(ref mut thunk, ref mut cached) => {
+                if self
+                    .graph
+                    .borrow()
+                    .edges_directed(self.idx, Incoming)
+                    .any(|edge| *edge.weight())
+                {
+                    thunk
+                } else {
+                    return cached.clone();
+                }
+            }
+        };
         let mut dirty_edges = Vec::new();
         {
             let dcg = self.graph.borrow();
             let rev_dcg = Reversed(&*dcg);
             let mut dfs = Dfs::new(rev_dcg, self.idx);
             while let Some(node) = dfs.next(rev_dcg) {
-                dirty_edges.extend(dcg.edges_directed(node, Incoming).filter_map(|edge| {
+                dirty_edges.extend(rev_dcg.edges(node).filter_map(|edge| {
                     if *edge.weight() {
                         Some(edge.id())
                     } else {
@@ -258,11 +265,10 @@ where
                 }));
             }
         }
-        let value = self.get();
         dirty_edges.iter().for_each(|edge| {
             self.graph.borrow_mut()[*edge] = false;
         });
-        value
+        thunk()
     }
 
     pub fn dirty(&self) -> bool {
@@ -282,7 +288,7 @@ where
     }
 }
 
-impl<T> DcgNode<'_, T, Cell>
+impl<T> DcgNode<T, CellTy>
 where
     T: PartialEq + Clone,
 {
@@ -312,16 +318,19 @@ where
     /// # Examples
     /// ```
     /// use dcg::Dcg;
+    /// use std::rc::Rc;
     ///
     /// let dcg = Dcg::new();
     ///
     /// let cell = dcg.cell(1);
     ///
-    /// let get_cell = || cell.get();
-    /// let thunk1 = dcg.thunk(&get_cell, &[cell.idx]);
-    /// let thunk2 = dcg.thunk(&get_cell, &[cell.idx]);
-    /// let get_thunk1 = || thunk1.get();
-    /// let thunk3 = dcg.thunk(&get_thunk1, &[thunk1.idx]);
+    /// let cell1 = cell.clone();
+    /// let get_cell = Rc::new(move || cell1.get());
+    /// let thunk1 = dcg.thunk(get_cell.clone(), &[cell.idx]);
+    /// let thunk2 = dcg.thunk(get_cell, &[cell.idx]);
+    /// let thunk11 = thunk1.clone();
+    /// let get_thunk1 = Rc::new(move || thunk11.get());
+    /// let thunk3 = dcg.thunk(get_thunk1, &[thunk1.idx]);
     ///
     /// thunk2.query();
     /// thunk3.query();
@@ -358,6 +367,9 @@ where
     pub fn set(&self, mut new_value: T) -> T {
         let value = match *self.data.borrow_mut() {
             DcgData::Cell(ref mut value, ref mut dirty) => {
+                if new_value == *value {
+                    return new_value;
+                }
                 std::mem::swap(value, &mut new_value);
                 *dirty = true;
                 new_value.clone()
@@ -390,6 +402,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::rc::Rc;
+
     use super::*;
 
     #[test]
@@ -408,9 +422,10 @@ mod tests {
         let dcg = Dcg::new();
 
         let a = dcg.cell(1);
+        let a1 = a.clone();
 
-        let get_a = || a.get();
-        let thunk = dcg.thunk(&get_a, &[a.idx]);
+        let get_a = Rc::new(move || a1.get());
+        let thunk = dcg.thunk(get_a, &[a.idx]);
 
         {
             let graph = dcg.graph.borrow();
@@ -433,9 +448,10 @@ mod tests {
         let dcg = Dcg::new();
 
         let a = dcg.cell(1);
+        let a1 = a.clone();
 
-        let get_a = || a.get();
-        let memo = dcg.memo(&get_a, &[a.idx]);
+        let get_a = Rc::new(move || a1.get());
+        let memo = dcg.memo(get_a, &[a.idx]);
 
         {
             let graph = dcg.graph.borrow();
@@ -457,7 +473,7 @@ mod tests {
     fn create_lone_thunk() {
         let dcg = Dcg::new();
 
-        let thunk = dcg.lone_thunk(&|| 42);
+        let thunk = dcg.lone_thunk(Rc::new(|| 42));
 
         assert_eq!(dcg.graph.borrow().node_count(), 1);
 
@@ -468,7 +484,7 @@ mod tests {
     fn create_lone_memo() {
         let dcg = Dcg::new();
 
-        let memo = dcg.lone_memo(&|| 42);
+        let memo = dcg.lone_memo(Rc::new(|| 42));
 
         assert_eq!(dcg.graph.borrow().node_count(), 1);
 
@@ -480,14 +496,17 @@ mod tests {
         let dcg = Dcg::new();
 
         let a = dcg.cell(1);
+        let a1 = a.clone();
 
-        let get_a = || a.get();
+        let get_a = Rc::new(move || a1.get());
 
-        let thunk1 = dcg.thunk(&get_a, &[a.idx]);
-        let thunk2 = dcg.thunk(&get_a, &[a.idx]);
+        let thunk1 = dcg.thunk(get_a.clone(), &[a.idx]);
+        let thunk11 = thunk1.clone();
+        let thunk2 = dcg.thunk(get_a.clone(), &[a.idx]);
+        let thunk21 = thunk2.clone();
 
-        let add = || thunk1.get() + thunk2.get();
-        let thunk3 = dcg.thunk(&add, &[thunk1.idx, thunk2.idx]);
+        let add = Rc::new(move || thunk11.get() + thunk21.get());
+        let thunk3 = dcg.thunk(add, &[thunk1.idx, thunk2.idx]);
 
         {
             let graph = dcg.graph.borrow();
@@ -520,9 +539,10 @@ mod tests {
         let dcg = Dcg::new();
 
         let a = dcg.cell(1);
+        let a1 = a.clone();
 
-        let get_a = || a.get();
-        let thunk = dcg.thunk(&get_a, &[a.idx]);
+        let get_a = Rc::new(move || a1.get());
+        let thunk = dcg.thunk(get_a, &[a.idx]);
 
         assert_eq!(thunk.query(), 1);
 
@@ -541,9 +561,10 @@ mod tests {
         let dcg = Dcg::new();
 
         let a = dcg.cell(1);
+        let a1 = a.clone();
 
-        let get_a = || a.get();
-        let thunk = dcg.thunk(&get_a, &[a.idx]);
+        let get_a = Rc::new(move || a1.get());
+        let thunk = dcg.thunk(get_a, &[a.idx]);
 
         a.set(2);
 
@@ -562,12 +583,14 @@ mod tests {
         let dcg = Dcg::new();
 
         let a = dcg.cell(1);
+        let a1 = a.clone();
 
-        let get_a = || a.get();
-        let b = dcg.thunk(&get_a, &[a.idx]);
+        let get_a = Rc::new(move || a1.get());
+        let b = dcg.thunk(get_a, &[a.idx]);
+        let b1 = b.clone();
 
-        let get_b = || b.get();
-        let c = dcg.thunk(&get_b, &[b.idx]);
+        let get_b = Rc::new(move || b1.get());
+        let c = dcg.thunk(get_b, &[b.idx]);
 
         a.set(2);
 
@@ -585,11 +608,12 @@ mod tests {
         let dcg = Dcg::new();
 
         let a = dcg.cell(1);
+        let a1 = a.clone();
 
-        let get_a = || a.get();
+        let get_a = Rc::new(move || a1.get());
 
-        let b = dcg.thunk(&get_a, &[a.idx]);
-        let c = dcg.thunk(&get_a, &[a.idx]);
+        let b = dcg.thunk(get_a.clone(), &[a.idx]);
+        let c = dcg.thunk(get_a, &[a.idx]);
 
         a.set(2);
 
@@ -603,26 +627,30 @@ mod tests {
     }
 
     #[test]
-    fn use_case() {
+    fn geometry() {
         let circle = Dcg::new();
 
         let radius = circle.cell(1.0);
         let pos = circle.cell((0.0, 0.0));
 
-        let calc_area = || {
-            let r = radius.get();
+        let radius1 = radius.clone();
+        let calc_area = Rc::new(move || {
+            let r = radius1.get();
             std::f64::consts::PI * r * r
-        };
-        let area = circle.memo(&calc_area, &[radius.idx]);
+        });
+        let area = circle.memo(calc_area, &[radius.idx]);
 
-        let calc_circum = || 2.0 * std::f64::consts::PI * radius.get();
-        let circum = circle.memo(&calc_circum, &[radius.idx]);
+        let radius2 = radius.clone();
+        let calc_circum = Rc::new(move || 2.0 * std::f64::consts::PI * radius2.get());
+        let circum = circle.memo(calc_circum, &[radius.idx]);
 
-        let calc_left_bound = || {
-            let (x, y) = pos.get();
-            (x - radius.get(), y)
-        };
-        let left_bound = circle.memo(&calc_left_bound, &[pos.idx, radius.idx]);
+        let pos1 = pos.clone();
+        let radius3 = radius.clone();
+        let calc_left_bound = Rc::new(move || {
+            let (x, y) = pos1.get();
+            (x - radius3.get(), y)
+        });
+        let left_bound = circle.memo(calc_left_bound, &[pos.idx, radius.idx]);
 
         assert!(radius.clean());
         assert!(area.dirty());
@@ -648,5 +676,33 @@ mod tests {
         assert_eq!(area.query(), 4.0 * std::f64::consts::PI);
         assert_eq!(circum.query(), 4.0 * std::f64::consts::PI);
         assert_eq!(left_bound.query(), (-2.0, 0.0));
+    }
+
+    #[test]
+    fn multiplication_table() {
+        let dcg = Dcg::new();
+
+        let n: usize = 100;
+
+        let nums = (1..=n).map(|i| Rc::new(dcg.cell(i))).collect::<Vec<_>>();
+
+        let mut thunk_table = Vec::with_capacity(n.pow(2) / 2 + n);
+        for i in 0..n {
+            for j in i..n {
+                let x = nums[i].clone();
+                let x_idx = x.idx;
+                let y = nums[j].clone();
+                let y_idx = y.idx;
+                thunk_table.push(dcg.thunk(Rc::new(move || x.get() * y.get()), &[x_idx, y_idx]));
+            }
+        }
+
+        assert_eq!(thunk_table[0].query(), 1);
+        assert_eq!(thunk_table[1].query(), 2);
+
+        assert_eq!(nums[0].set(5), 1);
+
+        assert_eq!(thunk_table[0].query(), 25);
+        assert_eq!(thunk_table[1].query(), 10);
     }
 }
