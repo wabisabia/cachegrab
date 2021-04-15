@@ -1,13 +1,12 @@
-use std::rc::Rc;
-
-use dcg::{CellTy, Dcg, DcgNode, MemoTy};
+use dcg::{Dcg, IncCell, IncMemo, Incremental};
 use petgraph::dot::Dot;
 
 struct Circle {
     dcg: Dcg,
-    radius: Rc<DcgNode<f64, CellTy>>,
-    circumference: DcgNode<f64, MemoTy>,
-    area: DcgNode<f64, MemoTy>,
+    pos: IncCell<(f64, f64)>,
+    radius: IncCell<f64>,
+    circumference: IncMemo<f64>,
+    area: IncMemo<f64>,
 }
 
 impl Circle {
@@ -15,20 +14,26 @@ impl Circle {
         let dcg = Dcg::new();
 
         let radius = dcg.cell(radius);
+        let pos = dcg.cell((0., 0.));
 
-        let radius1 = radius.clone();
-        let calc_circum = Rc::new(move || 2.0 * std::f64::consts::PI * radius1.get());
-        let circumference = dcg.memo(calc_circum, &[radius.idx]);
+        let radius_inc = radius.clone();
+        let circumference = dcg.memo(
+            move || 2. * std::f64::consts::PI * radius_inc.read(),
+            &[radius.idx()],
+        );
 
-        let radius2 = radius.clone();
-        let calc_area = Rc::new(move || {
-            let r = radius2.get();
-            std::f64::consts::PI * r * r
-        });
-        let area = dcg.memo(calc_area, &[radius.idx]);
+        let radius_inc = radius.clone();
+        let area = dcg.memo(
+            move || {
+                let r = radius_inc.read();
+                std::f64::consts::PI * r * r
+            },
+            &[radius.idx()],
+        );
 
         Circle {
             dcg,
+            pos,
             radius,
             circumference,
             area,
@@ -37,6 +42,10 @@ impl Circle {
 
     pub fn radius(&self) -> f64 {
         self.radius.query()
+    }
+
+    pub fn pos(&self) -> (f64, f64) {
+        self.pos.query()
     }
 
     pub fn circumference(&self) -> f64 {
@@ -52,19 +61,21 @@ fn main() {
     let circle = Circle::from_radius(1.);
 
     println!(
-        "{} {} {}",
+        "{} {:?} {} {}",
         circle.radius(),
+        circle.pos(),
         circle.circumference(),
         circle.area()
     );
 
-    circle.radius.set(2.);
+    circle.radius.write(2.);
 
     println!("{:?}", Dot::new(&*circle.dcg.graph.borrow()));
 
     println!(
-        "{} {} {}",
+        "{} {:?} {} {}",
         circle.radius(),
+        circle.pos(),
         circle.circumference(),
         circle.area()
     );
