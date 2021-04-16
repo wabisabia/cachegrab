@@ -1,6 +1,6 @@
 use criterion::{black_box, criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
-use dcg::{Dcg, IncCell, IncMemo, Incremental};
-use rand::{prelude::SliceRandom, rngs::SmallRng, Rng, SeedableRng};
+use dcg::{Dcg, Incremental};
+use rand::{prelude::SliceRandom, rngs::SmallRng, SeedableRng};
 
 fn internals(c: &mut Criterion) {
     let dcg = Dcg::new();
@@ -75,7 +75,7 @@ fn internals(c: &mut Criterion) {
 fn filter_random_letter(c: &mut Criterion) {
     let dcg = Dcg::new();
 
-    let needle = dcg.cell('c');
+    let needle = dcg.cell('a');
     let haystack = dcg.cell("the quick brown fox jumped over the lazy dog");
 
     let sizes = [2, 10, 100, 1000];

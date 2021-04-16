@@ -7,7 +7,13 @@ use petgraph::{
     EdgeDirection::Incoming,
 };
 
-use std::{cell::RefCell, fmt::Debug, mem, ops::Deref, ops::DerefMut, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    fmt::Debug,
+    ops::Deref,
+    ops::DerefMut,
+    rc::Rc,
+};
 
 type Graph = DiGraph<(), bool>;
 
@@ -22,53 +28,43 @@ impl Dcg {
     }
 
     pub fn cell<T>(&self, value: T) -> IncCell<T> {
-        IncCell::from_raw(RawIncCell {
-            data: RefCell::new((value, true)),
-            node: IcNode::from_dcg(self),
-        })
+        IncCell::with_node(Node::from_dcg(self), value)
     }
 
     pub fn thunk<T, F>(&self, f: F, deps: &[NodeIndex]) -> IncThunk<T>
     where
         F: Fn() -> T + 'static,
     {
-        let node = IcNode::from_dcg(self);
-        let mut graph = self.graph.borrow_mut();
-        deps.iter().for_each(|&x| {
-            graph.add_edge(x, node.idx, true);
-        });
-        IncThunk::from_raw(RawIncThunk {
-            f: Rc::new(f),
-            node,
-        })
+        let node = Node::from_dcg(self);
+        self.add_dependencies(&node, deps, true);
+        IncThunk::with_node(node, f)
     }
 
     pub fn memo<T, F>(&self, f: F, deps: &[NodeIndex]) -> IncMemo<T>
     where
         F: Fn() -> T + 'static,
     {
-        let node = IcNode::from_dcg(self);
-        let cached = f();
+        let node = Node::from_dcg(self);
+        // dependencies were cleaned when cached value was computed
+        self.add_dependencies(&node, deps, false);
+        IncMemo::with_node(node, f)
+    }
+
+    fn add_dependencies(&self, node: &Node, deps: &[NodeIndex], dirty: bool) {
         let mut graph = self.graph.borrow_mut();
         deps.iter().for_each(|&x| {
-            // dependencies were cleaned when cached value was computed
-            graph.add_edge(x, node.idx, false);
+            graph.add_edge(x, node.idx, dirty);
         });
-        IncMemo::from_raw(RawIncMemo {
-            f: Rc::new(f),
-            cached,
-            node,
-        })
     }
 }
 
 #[derive(Debug, Clone)]
-struct IcNode {
+struct Node {
     graph: Rc<RefCell<Graph>>,
     idx: NodeIndex,
 }
 
-impl IcNode {
+impl Node {
     fn from_dcg(dcg: &Dcg) -> Self {
         Self {
             graph: dcg.graph.clone(),
@@ -81,8 +77,12 @@ impl IcNode {
 pub struct IncCell<T>(Rc<RawIncCell<T>>);
 
 impl<T> IncCell<T> {
-    fn from_raw(raw: RawIncCell<T>) -> Self {
-        IncCell(Rc::new(raw))
+    fn with_node(node: Node, value: T) -> Self {
+        IncCell(Rc::new(RawIncCell {
+            value: RefCell::new(value),
+            dirty: Cell::new(true),
+            node,
+        }))
     }
 }
 
@@ -102,8 +102,9 @@ impl<T> DerefMut for IncCell<T> {
 
 #[derive(Debug)]
 pub struct RawIncCell<T> {
-    data: RefCell<(T, bool)>,
-    node: IcNode,
+    value: RefCell<T>,
+    dirty: Cell<bool>,
+    node: Node,
 }
 
 impl<T> RawIncCell<T>
@@ -115,13 +116,11 @@ where
     }
 
     pub fn write(&self, new: T) -> T {
-        let (ref mut value, ref mut dirty) = *self.data.borrow_mut();
-
-        if *value == new {
+        if *self.value.borrow_mut() == new {
             return new;
         }
 
-        *dirty = true;
+        self.dirty.set(true);
 
         {
             let mut graph = self.node.graph.borrow_mut();
@@ -143,21 +142,22 @@ where
             }
         }
 
-        mem::replace(value, new)
+        self.value.replace(new)
     }
 
     pub fn modify<F>(&self, f: F) -> T
     where
         F: FnOnce(&mut T) -> T,
     {
-        let (ref mut value, ref mut dirty) = *self.data.borrow_mut();
-        let new = f(value);
-
+        let mut value = self.value.borrow_mut();
+        let new = f(&mut value);
         if *value == new {
             return new;
         }
 
-        *dirty = true;
+        drop(value);
+
+        self.dirty.set(true);
 
         {
             let mut graph = self.node.graph.borrow_mut();
@@ -179,7 +179,7 @@ where
             }
         }
 
-        mem::replace(value, new)
+        self.value.replace(new)
     }
 }
 
@@ -187,8 +187,14 @@ where
 pub struct IncThunk<T>(Rc<RawIncThunk<T>>);
 
 impl<T> IncThunk<T> {
-    fn from_raw(raw: RawIncThunk<T>) -> Self {
-        Self(Rc::new(raw))
+    fn with_node<F>(node: Node, f: F) -> Self
+    where
+        F: Fn() -> T + 'static,
+    {
+        Self(Rc::new(RawIncThunk {
+            f: Rc::new(f),
+            node,
+        }))
     }
 }
 
@@ -202,7 +208,7 @@ impl<T> Deref for IncThunk<T> {
 #[derive(Clone)]
 pub struct RawIncThunk<T> {
     f: Rc<dyn Fn() -> T + 'static>,
-    node: IcNode,
+    node: Node,
 }
 
 impl<T> RawIncThunk<T> {
@@ -215,8 +221,16 @@ impl<T> RawIncThunk<T> {
 pub struct IncMemo<T>(Rc<RawIncMemo<T>>);
 
 impl<T> IncMemo<T> {
-    fn from_raw(raw: RawIncMemo<T>) -> Self {
-        Self(Rc::new(raw))
+    fn with_node<F>(node: Node, f: F) -> Self
+    where
+        F: Fn() -> T + 'static,
+    {
+        let cached = f();
+        Self(Rc::new(RawIncMemo {
+            f: Rc::new(f),
+            cached,
+            node,
+        }))
     }
 }
 
@@ -231,7 +245,7 @@ impl<T> Deref for IncMemo<T> {
 pub struct RawIncMemo<T> {
     f: Rc<dyn Fn() -> T + 'static>,
     cached: T,
-    node: IcNode,
+    node: Node,
 }
 
 impl<T> RawIncMemo<T> {
@@ -262,9 +276,8 @@ impl<T: Clone> Incremental for RawIncCell<T> {
     type Output = T;
 
     fn read(&self) -> Self::Output {
-        let (ref value, ref mut dirty) = *self.data.borrow_mut();
-        *dirty = false;
-        value.clone()
+        self.dirty.set(false);
+        self.value.borrow().clone()
     }
 
     fn query(&self) -> Self::Output {
@@ -272,7 +285,7 @@ impl<T: Clone> Incremental for RawIncCell<T> {
     }
 
     fn is_dirty(&self) -> bool {
-        self.data.borrow().1
+        self.dirty.get()
     }
 }
 
@@ -373,6 +386,20 @@ where
     }
 }
 
+#[macro_export]
+macro_rules! thunk {
+    ($dcg:expr, $thunk:expr, $($node:expr),+) => {
+        $dcg.thunk(move || $thunk, &[$($node.idx()),+])
+    }
+}
+
+#[macro_export]
+macro_rules! memo {
+    ($dcg:expr, $memo:expr, $($node:expr),+) => {
+        $dcg.memo(move || $memo, &[$($node.idx()),+])
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -408,6 +435,16 @@ mod tests {
     }
 
     #[test]
+    fn thunk_macro() {
+        let dcg = Dcg::new();
+        let cell = dcg.cell(1);
+        let cell_inc = cell.clone();
+        let thunk = thunk!(dcg, cell_inc.read(), cell);
+
+        assert_eq!(thunk.query(), 1);
+    }
+
+    #[test]
     fn create_memo() {
         let dcg = Dcg::new();
         let a = dcg.cell(1);
@@ -428,6 +465,16 @@ mod tests {
     }
 
     #[test]
+    fn memo_macro() {
+        let dcg = Dcg::new();
+        let cell = dcg.cell(1);
+        let cell_inc = cell.clone();
+        let memo = memo!(dcg, cell_inc.read(), cell);
+
+        assert_eq!(memo.query(), 1);
+    }
+
+    #[test]
     fn write() {
         let dcg = Dcg::new();
         let cell = dcg.cell(1);
@@ -441,7 +488,7 @@ mod tests {
         let dcg = Dcg::new();
         let cell = dcg.cell(1);
         let cell_inc = cell.clone();
-        let thunk = dcg.thunk(move || cell_inc.read(), &[cell.idx()]);
+        let thunk = thunk!(dcg, cell_inc.read(), cell);
 
         thunk.query();
         cell.write(2);
@@ -465,7 +512,7 @@ mod tests {
         let dcg = Dcg::new();
         let cell = dcg.cell(1);
         let cell_inc = cell.clone();
-        let thunk = dcg.thunk(move || cell_inc.read(), &[cell.idx()]);
+        let thunk = thunk!(dcg, cell_inc.read(), cell);
 
         assert_eq!(cell.modify(|x| *x + 1), 1);
         assert!(cell.is_dirty());
@@ -480,15 +527,12 @@ mod tests {
         let a = dcg.cell(1);
 
         let a_inc = a.clone();
-        let thunk1 = dcg.thunk(move || a_inc.read(), &[a.idx()]);
+        let thunk1 = thunk!(dcg, a_inc.read(), a);
         let thunk1_inc = thunk1.clone();
         let a_inc = a.clone();
-        let thunk2 = dcg.thunk(move || a_inc.read(), &[a.idx()]);
+        let thunk2 = thunk!(dcg, a_inc.read(), a);
         let thunk2_inc = thunk2.clone();
-        let thunk3 = dcg.thunk(
-            move || thunk1_inc.read() + thunk2_inc.read(),
-            &[thunk1.idx(), thunk2.idx()],
-        );
+        let thunk3 = thunk!(dcg, thunk1_inc.read() + thunk2_inc.read(), thunk1, thunk2);
 
         {
             let graph = dcg.graph.borrow();
@@ -518,9 +562,9 @@ mod tests {
         let dcg = Dcg::new();
         let a = dcg.cell(1);
         let a_inc = a.clone();
-        let thunk = dcg.thunk(move || a_inc.read(), &[a.idx()]);
+        let thunk = thunk!(dcg, a_inc.read(), a);
         let thunk_inc = thunk.clone();
-        let memo = dcg.memo(move || thunk_inc.read(), &[thunk.idx()]);
+        let memo = memo!(dcg, thunk_inc.read(), thunk);
 
         assert_eq!(a.write(2), 1);
 
@@ -536,7 +580,7 @@ mod tests {
         let dcg = Dcg::new();
         let a = dcg.cell(1);
         let a_inc = a.clone();
-        let memo = dcg.memo(move || a_inc.read(), &[a.idx()]);
+        let memo = memo!(dcg, a_inc.read(), a);
 
         a.write(2);
 
@@ -552,7 +596,7 @@ mod tests {
         let dcg = Dcg::new();
         let a = dcg.cell(1);
         let a_inc = a.clone();
-        let thunk = dcg.thunk(move || a_inc.read(), &[a.idx()]);
+        let thunk = thunk!(dcg, a_inc.read(), a);
 
         a.write(2);
 
@@ -568,9 +612,9 @@ mod tests {
         let dcg = Dcg::new();
         let cell = dcg.cell(1);
         let cell_inc = cell.clone();
-        let thunk1 = dcg.thunk(move || cell_inc.read(), &[cell.idx()]);
+        let thunk1 = thunk!(dcg, cell_inc.read(), cell);
         let thunk1_inc = thunk1.clone();
-        let thunk2 = dcg.thunk(move || thunk1_inc.read(), &[thunk1.idx()]);
+        let thunk2 = thunk!(dcg, thunk1_inc.read(), thunk1);
 
         cell.write(2);
         thunk2.query();
@@ -585,9 +629,9 @@ mod tests {
         let dcg = Dcg::new();
         let cell = dcg.cell(1);
         let cell_inc = cell.clone();
-        let thunk1 = dcg.thunk(move || cell_inc.read(), &[cell.idx()]);
+        let thunk1 = thunk!(dcg, cell_inc.read(), cell);
         let thunk1_inc = cell.clone();
-        let thunk2 = dcg.thunk(move || thunk1_inc.read(), &[cell.idx()]);
+        let thunk2 = thunk!(dcg, thunk1_inc.read(), cell);
 
         cell.write(2);
         thunk2.query();
@@ -602,9 +646,9 @@ mod tests {
         let dcg = Dcg::new();
         let cell = dcg.cell(1);
         let cell_inc = cell.clone();
-        let memo1 = dcg.memo(move || cell_inc.read(), &[cell.idx()]);
+        let memo1 = memo!(dcg, cell_inc.read(), cell);
         let memo1_inc = memo1.clone();
-        let memo2 = dcg.memo(move || memo1_inc.read(), &[memo1.idx()]);
+        let memo2 = memo!(dcg, memo1_inc.read(), memo1);
 
         cell.write(2);
         memo2.query();
@@ -619,9 +663,9 @@ mod tests {
         let dcg = Dcg::new();
         let cell = dcg.cell(1);
         let cell_inc = cell.clone();
-        let memo1 = dcg.memo(move || cell_inc.read(), &[cell.idx()]);
-        let memo1_inc = cell.clone();
-        let memo2 = dcg.memo(move || memo1_inc.read(), &[cell.idx()]);
+        let memo1 = memo!(dcg, cell_inc.read(), cell);
+        let cell_inc = cell.clone();
+        let memo2 = memo!(dcg, cell_inc.read(), cell);
 
         cell.write(2);
         memo2.query();
@@ -641,25 +685,28 @@ mod tests {
         let pos = circle.cell((0.0, 0.0));
 
         let radius_inc = radius.clone();
-        let area = circle.memo(
-            move || {
+        let area = memo!(
+            circle,
+            {
                 let r = radius_inc.read();
                 PI * r * r
             },
-            &[radius.idx()],
+            radius
         );
 
         let radius_inc = radius.clone();
-        let circum = circle.memo(move || 2.0 * PI * radius_inc.read(), &[radius.idx()]);
+        let circum = memo!(circle, 2. * PI * radius_inc.read(), radius);
 
         let pos_inc = pos.clone();
         let radius_inc = radius.clone();
-        let left_bound = circle.memo(
-            move || {
+        let left_bound = memo!(
+            circle,
+            {
                 let (x, y) = pos_inc.read();
                 (x - radius_inc.read(), y)
             },
-            &[pos.idx(), radius.idx()],
+            pos,
+            radius
         );
 
         assert!(radius.is_clean());
@@ -701,10 +748,7 @@ mod tests {
             for j in i..n {
                 let x_inc = nums[i].clone();
                 let y_inc = nums[j].clone();
-                thunk_table.push(dcg.thunk(
-                    move || x_inc.read() * y_inc.read(),
-                    &[nums[i].idx(), nums[j].idx()],
-                ));
+                thunk_table.push(thunk!(dcg, x_inc.read() * y_inc.read(), nums[i], nums[j]));
             }
         }
 
