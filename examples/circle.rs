@@ -1,17 +1,16 @@
 use std::f64::consts::PI;
 
-use dcg::{memo, Dcg, IncCell, IncMemo, Incremental};
-use petgraph::dot::Dot;
+use dcg::{memo, Cell, Dcg, Incremental, Memo};
 
 type Point = (f64, f64);
 
 struct Circle {
     dcg: Dcg,
-    pos: IncCell<Point>,
-    radius: IncCell<f64>,
-    circumference: IncMemo<f64>,
-    area: IncMemo<f64>,
-    bounding_box: IncMemo<(Point, f64, f64)>,
+    pos: Cell<Point>,
+    radius: Cell<f64>,
+    circumference: Memo<f64>,
+    area: Memo<f64>,
+    bounding_box: Memo<(Point, f64, f64)>,
 }
 
 impl Circle {
@@ -73,7 +72,7 @@ fn main() {
 
     circle.radius.write(2.);
 
-    println!("{:?}", Dot::new(&*circle.dcg.graph.borrow()));
+    println!("{:?}", circle.dcg);
 
     println!(
         "{} {:?} {} {} {:?}",
@@ -84,5 +83,5 @@ fn main() {
         circle.bounding_box.query(),
     );
 
-    println!("{:?}", Dot::new(&*circle.dcg.graph.borrow()));
+    println!("{:?}", circle.dcg);
 }

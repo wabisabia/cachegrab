@@ -1,53 +1,150 @@
+#![warn(missing_docs)]
+
+//! `dcg` implements a demanded computation graph (DCG) used in incremental computation (IC).
+
 use petgraph::{
+    dot::Dot,
     graph::{DiGraph, NodeIndex},
-    visit::Dfs,
-    visit::EdgeRef,
-    visit::IntoEdges,
-    visit::Reversed,
+    visit::{depth_first_search, Control, DfsEvent, Reversed},
     EdgeDirection::Incoming,
 };
 
-use std::{
-    cell::{Cell, RefCell},
-    fmt::Debug,
-    ops::Deref,
-    ops::DerefMut,
-    rc::Rc,
-};
+use std::{cell, cell::RefCell, fmt, rc::Rc};
 
 type Graph = DiGraph<(), bool>;
 
-#[derive(Debug, Clone, Default)]
+/// Creates- and stores dependencies between- data and compute nodes in an incremental computation.
+#[derive(Default)]
 pub struct Dcg {
-    pub graph: Rc<RefCell<Graph>>,
+    graph: Rc<RefCell<Graph>>,
 }
 
+/// Refines the concept of a shared [`RawCell`].
+pub type Cell<T> = Rc<RawCell<T>>;
+
+/// Refines the concept of a shared [`RawThunk`].
+pub type Thunk<T> = Rc<RawThunk<T>>;
+
+/// Refines the concept of a shared [`RawMemo`].
+pub type Memo<T> = Rc<RawMemo<T>>;
+
 impl Dcg {
+    /// Creates a new, empty DCG.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use dcg::Dcg;
+    ///
+    /// # #[allow(unused)]
+    /// let dcg = Dcg::new();
+    /// ```
     pub fn new() -> Self {
         Default::default()
     }
 
-    pub fn cell<T>(&self, value: T) -> IncCell<T> {
-        IncCell::with_node(Node::from_dcg(self), value)
+    /// Creates a dirty data node, or _cell_, initialised with the given value.
+    ///
+    /// The constructed data node will initially be dirty, as it has never been queried.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use dcg::{Dcg, Incremental};
+    ///
+    /// let dcg = Dcg::new();
+    ///
+    /// # #[allow(unused)]
+    /// let cell = dcg.cell(1);
+    ///
+    /// assert!(cell.is_dirty());
+    /// assert_eq!(cell.query(), 1);
+    /// assert!(cell.is_clean());
+    /// ```
+    pub fn cell<T>(&self, value: T) -> Cell<T> {
+        Rc::new(RawCell {
+            value: RefCell::new(value),
+            dirty: cell::Cell::new(true),
+            node: Node::from_dcg(self),
+        })
     }
 
-    pub fn thunk<T, F>(&self, f: F, deps: &[NodeIndex]) -> IncThunk<T>
+    /// Creates a dirty compute node from the given closure and registers the given dependencies with the
+    /// DCG for tracking.
+    ///
+    /// The constructed compute node will initially be dirty, as it has never been queried.
+    ///
+    /// If a caching compute node is needed, use [`Dcg::memo`] instead.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use dcg::{Dcg, Incremental};
+    ///
+    /// let dcg = Dcg::new();
+    ///
+    /// let cell = dcg.cell(1);
+    ///
+    /// let cell_inc = cell.clone();
+    /// # #[allow(unused)]
+    /// let thunk = dcg.thunk(move || cell_inc.read() + 1, &[cell.idx()]);
+    ///
+    /// assert!(thunk.is_dirty());
+    /// assert_eq!(thunk.query(), 2);
+    /// assert!(thunk.is_clean());
+    /// ```
+    pub fn thunk<T, F>(&self, f: F, deps: &[NodeIndex]) -> Thunk<T>
     where
         F: Fn() -> T + 'static,
     {
         let node = Node::from_dcg(self);
         self.add_dependencies(&node, deps, true);
-        IncThunk::with_node(node, f)
+        Rc::new(RawThunk {
+            f: Rc::new(f),
+            node,
+        })
     }
 
-    pub fn memo<T, F>(&self, f: F, deps: &[NodeIndex]) -> IncMemo<T>
+    /// Creates a clean caching compute node from the given closure and registers the given dependencies
+    /// with the DCG for tracking.
+    ///
+    /// This method queries the newly created node to generate an initial cached value, so the node
+    /// and its dependencies will be cleaned.
+    ///
+    /// If a non-caching compute node is needed, use [`Dcg::thunk`] instead.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use dcg::{Dcg, Incremental};
+    ///
+    /// let dcg = Dcg::new();
+    ///
+    /// let cell = dcg.cell(1);
+    ///
+    /// let cell_inc = cell.clone();
+    /// # #[allow(unused)]
+    /// let memo = dcg.memo(move || cell_inc.read() + 1, &[cell.idx()]);
+    ///
+    /// assert!(memo.is_clean());
+    /// assert_eq!(memo.query(), 2);
+    /// assert_eq!(cell.write(2), 1);
+    /// assert!(memo.is_dirty());
+    /// ```
+    pub fn memo<T: Clone, F>(&self, f: F, deps: &[NodeIndex]) -> Memo<T>
     where
         F: Fn() -> T + 'static,
     {
         let node = Node::from_dcg(self);
-        // dependencies were cleaned when cached value was computed
         self.add_dependencies(&node, deps, false);
-        IncMemo::with_node(node, f)
+        let cached = f();
+        let memo = Rc::new(RawMemo {
+            f: Rc::new(f),
+            cached,
+            node,
+        });
+        memo.query();
+        memo
     }
 
     fn add_dependencies(&self, node: &Node, deps: &[NodeIndex], dirty: bool) {
@@ -58,7 +155,67 @@ impl Dcg {
     }
 }
 
-#[derive(Debug, Clone)]
+impl fmt::Debug for Dcg {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:?}", Dot::new(&*self.graph.borrow()))
+    }
+}
+
+// Dirties the indexed node's transitive dependents.
+// A DFS originating from the node gathers clean edges, pruning those that are already dirty, and dirties them.
+fn dirty(graph: &Rc<RefCell<Graph>>, from: NodeIndex) {
+    let mut edges_to_update = Vec::new();
+    {
+        let borrowed = graph.borrow();
+        depth_first_search(&*borrowed, Some(from), |event| {
+            match event {
+                DfsEvent::TreeEdge(u, v) | DfsEvent::CrossForwardEdge(u, v) => {
+                    let edge = borrowed.find_edge(u, v).unwrap();
+                    if borrowed[edge] {
+                        return Control::Prune::<()>;
+                    }
+                    edges_to_update.push(edge);
+                }
+                _ => (),
+            }
+            Control::Continue::<()>
+        });
+    }
+
+    let mut graph = graph.borrow_mut();
+    edges_to_update.iter().for_each(|&edge| {
+        graph[edge] = true;
+    });
+}
+
+// Cleans the indexed node's transitive dependencies.
+// A DFS in the reversed graph originating from the node gathers dirty edges, pruning those that are already clean, and cleans them.
+fn clean(graph: &Rc<RefCell<Graph>>, from: NodeIndex) {
+    let mut edges_to_clean = Vec::new();
+    {
+        let graph = graph.borrow();
+        let rev_graph = Reversed(&*graph);
+        depth_first_search(rev_graph, Some(from), |event| {
+            match event {
+                DfsEvent::TreeEdge(u, v) | DfsEvent::CrossForwardEdge(u, v) => {
+                    let edge = graph.find_edge(v, u).unwrap();
+                    if !graph[edge] {
+                        return Control::Prune::<()>;
+                    }
+                    edges_to_clean.push(edge);
+                }
+                _ => (),
+            };
+            Control::Continue::<()>
+        });
+    }
+
+    let mut graph = graph.borrow_mut();
+    edges_to_clean.iter().for_each(|&edge| {
+        graph[edge] = false;
+    });
+}
+
 struct Node {
     graph: Rc<RefCell<Graph>>,
     idx: NodeIndex,
@@ -73,48 +230,62 @@ impl Node {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct IncCell<T>(Rc<RawIncCell<T>>);
-
-impl<T> IncCell<T> {
-    fn with_node(node: Node, value: T) -> Self {
-        IncCell(Rc::new(RawIncCell {
-            value: RefCell::new(value),
-            dirty: Cell::new(true),
-            node,
-        }))
-    }
-}
-
-impl<T> Deref for IncCell<T> {
-    type Target = Rc<RawIncCell<T>>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl<T> DerefMut for IncCell<T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
-
-#[derive(Debug)]
-pub struct RawIncCell<T> {
+/// Queryable, writable incremental data-storing node.
+pub struct RawCell<T> {
     value: RefCell<T>,
-    dirty: Cell<bool>,
+    dirty: cell::Cell<bool>,
     node: Node,
 }
 
-impl<T> RawIncCell<T>
+impl<T> RawCell<T>
 where
     T: PartialEq + Clone,
 {
+    /// Retrieves the index of the corresponding DCG node.
+    ///
+    /// This used to indicate a dependency when creating a [`Thunk`] or [`Memo`]
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use dcg::{Dcg, Incremental};
+    /// use petgraph::graph::NodeIndex;
+    ///
+    /// let dcg = Dcg::new();
+    ///
+    /// let cell = dcg.cell(1);
+    ///
+    /// let cell_inc = cell.clone();
+    /// let thunk = dcg.thunk(move || cell_inc.read(), &[cell.idx()]);
+    ///
+    /// assert_eq!(cell.idx(), NodeIndex::new(0));
+    /// ```
     pub fn idx(&self) -> NodeIndex {
         self.node.idx
     }
 
+    /// Writes a value into the cell, returning the previous stored value and dirtying the node and
+    /// its transitive dependents if the new value differs from the old value.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use dcg::{Dcg, Incremental};
+    ///
+    /// let dcg = Dcg::new();
+    ///
+    /// let cell = dcg.cell(1);
+    ///
+    /// cell.query();
+    ///
+    /// assert_eq!(cell.write(1), 1);
+    /// assert!(cell.is_clean());
+    /// assert_eq!(cell.query(), 1);
+    ///
+    /// assert_eq!(cell.write(2), 1);
+    /// assert!(cell.is_dirty());
+    /// assert_eq!(cell.query(), 2);
+    /// ```
     pub fn write(&self, new: T) -> T {
         if *self.value.borrow_mut() == new {
             return new;
@@ -122,35 +293,40 @@ where
 
         self.dirty.set(true);
 
-        {
-            let mut graph = self.node.graph.borrow_mut();
-            let mut dfs = Dfs::new(&*graph, self.idx());
-            while let Some(node) = dfs.next(&*graph) {
-                let edges = graph
-                    .edges(node)
-                    .filter_map(|edge| {
-                        if *edge.weight() {
-                            None
-                        } else {
-                            Some(edge.id())
-                        }
-                    })
-                    .collect::<Vec<_>>();
-                edges.iter().for_each(|edge| {
-                    graph[*edge] = true;
-                });
-            }
-        }
+        dirty(&self.node.graph, self.idx());
 
         self.value.replace(new)
     }
 
+    /// Modifies the value in the cell, returning the value before modification and dirtying the node and
+    /// its transitive dependents if the new value differs from the old value.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use dcg::{Dcg, Incremental};
+    ///
+    /// let dcg = Dcg::new();
+    ///
+    /// let cell = dcg.cell(1);
+    ///
+    /// cell.query();
+    ///
+    /// assert_eq!(cell.modify(|x| *x), 1);
+    /// assert!(cell.is_clean());
+    /// assert_eq!(cell.query(), 1);
+    ///
+    /// assert_eq!(cell.modify(|x| *x + 1), 1);
+    /// assert!(cell.is_dirty());
+    /// assert_eq!(cell.query(), 2);
+    /// ```
     pub fn modify<F>(&self, f: F) -> T
     where
         F: FnOnce(&mut T) -> T,
     {
         let mut value = self.value.borrow_mut();
         let new = f(&mut value);
+
         if *value == new {
             return new;
         }
@@ -159,120 +335,89 @@ where
 
         self.dirty.set(true);
 
-        {
-            let mut graph = self.node.graph.borrow_mut();
-            let mut dfs = Dfs::new(&*graph, self.idx());
-            while let Some(node) = dfs.next(&*graph) {
-                let edges = graph
-                    .edges(node)
-                    .filter_map(|edge| {
-                        if *edge.weight() {
-                            None
-                        } else {
-                            Some(edge.id())
-                        }
-                    })
-                    .collect::<Vec<_>>();
-                edges.iter().for_each(|edge| {
-                    graph[*edge] = true;
-                });
-            }
-        }
+        dirty(&self.node.graph, self.idx());
 
         self.value.replace(new)
     }
 }
 
-#[derive(Clone)]
-pub struct IncThunk<T>(Rc<RawIncThunk<T>>);
-
-impl<T> IncThunk<T> {
-    fn with_node<F>(node: Node, f: F) -> Self
-    where
-        F: Fn() -> T + 'static,
-    {
-        Self(Rc::new(RawIncThunk {
-            f: Rc::new(f),
-            node,
-        }))
-    }
-}
-
-impl<T> Deref for IncThunk<T> {
-    type Target = RawIncThunk<T>;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-#[derive(Clone)]
-pub struct RawIncThunk<T> {
+/// Queryable incremental compute node.
+pub struct RawThunk<T> {
     f: Rc<dyn Fn() -> T + 'static>,
     node: Node,
 }
 
-impl<T> RawIncThunk<T> {
+impl<T> RawThunk<T> {
+    /// Retrieves the index of the corresponding DCG node.
+    ///
+    /// This used to indicate a dependency when creating a [`Thunk`] or [`Memo`]
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use dcg::{Dcg, Incremental};
+    /// use petgraph::graph::NodeIndex;
+    ///
+    /// let dcg = Dcg::new();
+    ///
+    /// let thunk = dcg.thunk(|| 1, &[]);
+    ///
+    /// let thunk_inc = thunk.clone();
+    /// let memo = dcg.memo(move || thunk_inc.read(), &[thunk.idx()]);
+    ///
+    /// assert_eq!(thunk.idx(), NodeIndex::new(0));
     pub fn idx(&self) -> NodeIndex {
         self.node.idx
     }
 }
 
-#[derive(Clone)]
-pub struct IncMemo<T>(Rc<RawIncMemo<T>>);
-
-impl<T> IncMemo<T> {
-    fn with_node<F>(node: Node, f: F) -> Self
-    where
-        F: Fn() -> T + 'static,
-    {
-        let cached = f();
-        Self(Rc::new(RawIncMemo {
-            f: Rc::new(f),
-            cached,
-            node,
-        }))
-    }
-}
-
-impl<T> Deref for IncMemo<T> {
-    type Target = RawIncMemo<T>;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-#[derive(Clone)]
-pub struct RawIncMemo<T> {
+/// Queryable incremental caching compute node.
+pub struct RawMemo<T> {
     f: Rc<dyn Fn() -> T + 'static>,
     cached: T,
     node: Node,
 }
 
-impl<T> RawIncMemo<T> {
+impl<T> RawMemo<T> {
+    /// Retrieves the index of the corresponding DCG node.
     pub fn idx(&self) -> NodeIndex {
         self.node.idx
     }
 }
 
+/// Allows a type to adopt incremental "clean" and "dirty" semantics in a dependency tracking environment.
 pub trait Incremental {
+    /// The type returned when reading or querying a node.
     type Output;
 
-    /// Returns the node's most up-to-date value depending on its validity
+    /// Returns the node's most up-to-date value.
+    ///
+    /// This method is **only** used when trying to retrieve a value _within an incremental computation_.
+    /// Otherwise, if a node's value is needed, use [`Incremental::query`] instead.
     fn read(&self) -> Self::Output;
 
-    /// If dirty, cleans transitive dependencies and returns the node's most up-to-date value
+    /// Cleans transitive dependencies and returns the node's most up-to-date value.
+    ///
+    /// This method is used to interrogate incremental nodes to force their values to update.
+    /// If no dependency cleaning is required, consider using [`Incremental::read`].
     fn query(&self) -> Self::Output;
 
+    /// Returns `true` if the node is dirty.
+    ///
+    /// The default implementation requires that [`Incremental::is_clean`] is implemented and negates the result.
     fn is_dirty(&self) -> bool {
         !self.is_clean()
     }
 
+    /// Returns `true` if the node is clean.
+    ///
+    /// The default implementation requires that [`Incremental::is_dirty`] is implemented and negates the result.
     fn is_clean(&self) -> bool {
         !self.is_dirty()
     }
 }
 
-impl<T: Clone> Incremental for RawIncCell<T> {
+impl<T: Clone> Incremental for RawCell<T> {
     type Output = T;
 
     fn read(&self) -> Self::Output {
@@ -289,7 +434,7 @@ impl<T: Clone> Incremental for RawIncCell<T> {
     }
 }
 
-impl<T> Incremental for RawIncThunk<T> {
+impl<T> Incremental for RawThunk<T> {
     type Output = T;
 
     fn read(&self) -> Self::Output {
@@ -298,26 +443,7 @@ impl<T> Incremental for RawIncThunk<T> {
 
     fn query(&self) -> Self::Output {
         if self.is_dirty() {
-            let mut edges_to_clean = Vec::new();
-            {
-                let graph = self.node.graph.borrow();
-                let rev_graph = Reversed(&*graph);
-                let mut dfs = Dfs::new(rev_graph, self.idx());
-                while let Some(node) = dfs.next(rev_graph) {
-                    edges_to_clean.extend(rev_graph.edges(node).filter_map(|edge| {
-                        if *edge.weight() {
-                            Some(edge.id())
-                        } else {
-                            None
-                        }
-                    }));
-                }
-            }
-
-            let mut graph = self.node.graph.borrow_mut();
-            edges_to_clean.iter().for_each(|&edge| {
-                graph[edge] = false;
-            });
+            clean(&self.node.graph, self.idx());
         }
 
         (self.f)()
@@ -332,7 +458,7 @@ impl<T> Incremental for RawIncThunk<T> {
     }
 }
 
-impl<T> Incremental for RawIncMemo<T>
+impl<T> Incremental for RawMemo<T>
 where
     T: Clone,
 {
@@ -351,28 +477,7 @@ where
             return self.cached.clone();
         }
 
-        let mut edges_to_clean = Vec::new();
-        {
-            let graph = self.node.graph.borrow();
-            let rev_graph = Reversed(&*graph);
-            let mut dfs = Dfs::new(rev_graph, self.idx());
-            while let Some(node) = dfs.next(rev_graph) {
-                edges_to_clean.extend(rev_graph.edges(node).filter_map(|edge| {
-                    if *edge.weight() {
-                        Some(edge.id())
-                    } else {
-                        None
-                    }
-                }));
-            }
-        }
-
-        {
-            let mut graph = self.node.graph.borrow_mut();
-            edges_to_clean.iter().for_each(|&edge| {
-                graph[edge] = false;
-            });
-        }
+        clean(&self.node.graph, self.idx());
 
         (self.f)()
     }
@@ -386,6 +491,7 @@ where
     }
 }
 
+/// Convenience macro for creating [`Dcg::thunk`]s.
 #[macro_export]
 macro_rules! thunk {
     ($dcg:expr, $thunk:expr, $($node:expr),+) => {
@@ -393,6 +499,7 @@ macro_rules! thunk {
     }
 }
 
+/// Convenience macro for creating [`Dcg::memo`]s.
 #[macro_export]
 macro_rules! memo {
     ($dcg:expr, $memo:expr, $($node:expr),+) => {
@@ -408,28 +515,27 @@ mod tests {
     fn create_cell() {
         let dcg = Dcg::new();
 
-        let a = dcg.cell(1);
+        let cell = dcg.cell(1);
 
         assert_eq!(dcg.graph.borrow().node_count(), 1);
-        assert_eq!(a.query(), 1);
+        assert_eq!(cell.query(), 1);
     }
 
     #[test]
     fn create_thunk() {
         let dcg = Dcg::new();
-        let a = dcg.cell(1);
-        let a1 = a.clone();
-
-        let thunk = dcg.thunk(move || a1.read(), &[a.idx()]);
+        let cell = dcg.cell(1);
+        let cell_inc = cell.clone();
+        let thunk = dcg.thunk(move || cell_inc.read(), &[cell.idx()]);
 
         {
             let graph = dcg.graph.borrow();
             assert_eq!(graph.node_count(), 2);
-            assert!(graph.contains_edge(a.idx(), thunk.idx()));
-            assert!(graph[graph.find_edge(a.idx(), thunk.idx()).unwrap()]);
+            assert!(graph.contains_edge(cell.idx(), thunk.idx()));
+            assert!(graph[graph.find_edge(cell.idx(), thunk.idx()).unwrap()]);
         }
 
-        assert!(a.is_dirty());
+        assert!(cell.is_dirty());
         assert!(thunk.is_dirty());
         assert_eq!(thunk.query(), 1);
     }
@@ -447,19 +553,19 @@ mod tests {
     #[test]
     fn create_memo() {
         let dcg = Dcg::new();
-        let a = dcg.cell(1);
+        let cell = dcg.cell(1);
 
-        let a_inc = a.clone();
-        let memo = dcg.memo(move || a_inc.read(), &[a.idx()]);
+        let cell_inc = cell.clone();
+        let memo = dcg.memo(move || cell_inc.read(), &[cell.idx()]);
 
         {
             let graph = dcg.graph.borrow();
             assert_eq!(graph.node_count(), 2);
-            assert!(graph.contains_edge(a.idx(), memo.idx()));
-            assert!(!graph[graph.find_edge(a.idx(), memo.idx()).unwrap()]);
+            assert!(graph.contains_edge(cell.idx(), memo.idx()));
+            assert!(!graph[graph.find_edge(cell.idx(), memo.idx()).unwrap()]);
         }
 
-        assert!(a.is_clean());
+        assert!(cell.is_clean());
         assert!(memo.is_clean());
         assert_eq!(memo.query(), 1);
     }
@@ -489,13 +595,111 @@ mod tests {
         let cell = dcg.cell(1);
         let cell_inc = cell.clone();
         let thunk = thunk!(dcg, cell_inc.read(), cell);
-
         thunk.query();
+
         cell.write(2);
 
         assert!(cell.is_dirty());
+        assert!(thunk.is_dirty());
         let graph = dcg.graph.borrow();
         assert!(graph[graph.find_edge(cell.idx(), thunk.idx()).unwrap()]);
+    }
+
+    #[test]
+    fn write_dirties_deep() {
+        let dcg = Dcg::new();
+        let cell = dcg.cell(1);
+        let cell_inc = cell.clone();
+        let thunk1 = thunk!(dcg, cell_inc.read(), cell);
+        let thunk1_inc = thunk1.clone();
+        let memo = memo!(dcg, thunk1_inc.read(), thunk1);
+        thunk1.query();
+
+        cell.write(2);
+
+        assert!(cell.is_dirty());
+        assert!(thunk1.is_dirty());
+        assert!(memo.is_dirty());
+    }
+
+    #[test]
+    fn write_dirties_wide() {
+        let dcg = Dcg::new();
+        let cell = dcg.cell(1);
+        let cell_inc = cell.clone();
+        let thunk1 = thunk!(dcg, cell_inc.read(), cell);
+        let cell_inc = cell.clone();
+        let thunk2 = thunk!(dcg, cell_inc.read(), cell);
+        thunk1.query();
+        thunk2.query();
+
+        cell.write(2);
+
+        assert!(thunk1.is_dirty());
+        assert!(thunk2.is_dirty());
+    }
+
+    #[test]
+    fn write_dirty_prunes() {
+        let dcg = Dcg::new();
+        let cell = dcg.cell(1);
+        let cell_inc = cell.clone();
+        let thunk1 = thunk!(dcg, cell_inc.read(), cell);
+        let thunk1_inc = thunk1.clone();
+        let thunk2 = thunk!(dcg, thunk1_inc.read(), thunk1);
+        // let e1 = cell -> thunk1, e2 = thunk1 -> thunk2
+        // force e1 = dirty, e2 = clean
+        // if e2 remains clean after dirtying, we know e1 was pruned
+        let graph = dcg.graph.borrow();
+        let e1 = graph.find_edge(cell.idx(), thunk1.idx()).unwrap();
+        let e2 = graph.find_edge(thunk1.idx(), thunk2.idx()).unwrap();
+        drop(graph);
+        {
+            dcg.graph.borrow_mut()[e2] = false;
+        }
+
+        cell.write(2);
+
+        let graph = dcg.graph.borrow();
+        assert!(graph[e1]);
+        assert!(!graph[e2]);
+    }
+
+    #[test]
+    fn write_dirty_doesnt_overprune() {
+        let dcg = Dcg::new();
+        let cell = dcg.cell(1);
+        let cell_inc = cell.clone();
+        let thunk1 = thunk!(dcg, cell_inc.read(), cell);
+        let cell_inc = cell.clone();
+        let thunk2 = thunk!(dcg, cell_inc.read(), cell);
+        let thunk2_inc = thunk2.clone();
+        let thunk3 = thunk!(dcg, thunk2_inc.read(), thunk2);
+        //      thunk1
+        //  e1 /
+        // cell
+        //  e2 \\      e3
+        //      thunk2 -- thunk3
+        // DFS visits e2 then e1
+        // if e3 remains clean after dirtying and e1 was dirtied, we know e2 was pruned and e1 was
+        // still visited and dirtied
+        let graph = dcg.graph.borrow();
+        let e1 = graph.find_edge(cell.idx(), thunk1.idx()).unwrap();
+        let e2 = graph.find_edge(cell.idx(), thunk2.idx()).unwrap();
+        let e3 = graph.find_edge(thunk2.idx(), thunk3.idx()).unwrap();
+        drop(graph);
+        {
+            let mut graph = dcg.graph.borrow_mut();
+            graph[e1] = false;
+            graph[e3] = false;
+        }
+
+        cell.write(2);
+
+        let graph = dcg.graph.borrow();
+        assert!(graph[e1]);
+        assert!(graph[e2]);
+        assert!(!graph[e3]);
     }
 
     #[test]
@@ -513,6 +717,7 @@ mod tests {
         let cell = dcg.cell(1);
         let cell_inc = cell.clone();
         let thunk = thunk!(dcg, cell_inc.read(), cell);
+        thunk.query();
 
         assert_eq!(cell.modify(|x| *x + 1), 1);
         assert!(cell.is_dirty());
@@ -524,30 +729,29 @@ mod tests {
     #[test]
     fn thunks_nest() {
         let dcg = Dcg::new();
-        let a = dcg.cell(1);
-
-        let a_inc = a.clone();
-        let thunk1 = thunk!(dcg, a_inc.read(), a);
+        let cell = dcg.cell(1);
+        let cell_inc = cell.clone();
+        let thunk1 = thunk!(dcg, cell_inc.read(), cell);
         let thunk1_inc = thunk1.clone();
-        let a_inc = a.clone();
-        let thunk2 = thunk!(dcg, a_inc.read(), a);
+        let cell_inc = cell.clone();
+        let thunk2 = thunk!(dcg, cell_inc.read(), cell);
         let thunk2_inc = thunk2.clone();
         let thunk3 = thunk!(dcg, thunk1_inc.read() + thunk2_inc.read(), thunk1, thunk2);
 
         {
             let graph = dcg.graph.borrow();
             assert_eq!(graph.node_count(), 4);
-            assert!(graph.contains_edge(a.idx(), thunk1.idx()));
-            assert!(graph.contains_edge(a.idx(), thunk2.idx()));
+            assert!(graph.contains_edge(cell.idx(), thunk1.idx()));
+            assert!(graph.contains_edge(cell.idx(), thunk2.idx()));
             assert!(graph.contains_edge(thunk1.idx(), thunk3.idx()));
             assert!(graph.contains_edge(thunk2.idx(), thunk3.idx()));
-            assert!(graph[graph.find_edge(a.idx(), thunk1.idx()).unwrap()]);
-            assert!(graph[graph.find_edge(a.idx(), thunk2.idx()).unwrap()]);
+            assert!(graph[graph.find_edge(cell.idx(), thunk1.idx()).unwrap()]);
+            assert!(graph[graph.find_edge(cell.idx(), thunk2.idx()).unwrap()]);
             assert!(graph[graph.find_edge(thunk1.idx(), thunk3.idx()).unwrap()]);
             assert!(graph[graph.find_edge(thunk2.idx(), thunk3.idx()).unwrap()]);
         }
 
-        assert!(a.is_dirty());
+        assert!(cell.is_dirty());
         assert!(thunk1.is_dirty());
         assert!(thunk2.is_dirty());
         assert!(thunk3.is_dirty());
@@ -558,53 +762,35 @@ mod tests {
     }
 
     #[test]
-    fn write_dirties_deep() {
-        let dcg = Dcg::new();
-        let a = dcg.cell(1);
-        let a_inc = a.clone();
-        let thunk = thunk!(dcg, a_inc.read(), a);
-        let thunk_inc = thunk.clone();
-        let memo = memo!(dcg, thunk_inc.read(), thunk);
-
-        assert_eq!(a.write(2), 1);
-
-        assert!(a.is_dirty());
-        assert!(thunk.is_dirty());
-        assert!(memo.is_dirty());
-        let graph = dcg.graph.borrow();
-        assert!(graph[graph.find_edge(a.idx(), thunk.idx()).unwrap()]);
-    }
-
-    #[test]
     fn memo_query_cleans() {
         let dcg = Dcg::new();
-        let a = dcg.cell(1);
-        let a_inc = a.clone();
-        let memo = memo!(dcg, a_inc.read(), a);
+        let cell = dcg.cell(1);
+        let cell_inc = cell.clone();
+        let memo = memo!(dcg, cell_inc.read(), cell);
 
-        a.write(2);
+        cell.write(2);
 
         assert_eq!(memo.query(), 2);
-        assert!(a.is_clean());
+        assert!(cell.is_clean());
         assert!(memo.is_clean());
         let graph = dcg.graph.borrow();
-        assert!(!graph[graph.find_edge(a.idx(), memo.idx()).unwrap()]);
+        assert!(!graph[graph.find_edge(cell.idx(), memo.idx()).unwrap()]);
     }
 
     #[test]
     fn thunk_query_cleans() {
         let dcg = Dcg::new();
-        let a = dcg.cell(1);
-        let a_inc = a.clone();
-        let thunk = thunk!(dcg, a_inc.read(), a);
+        let cell = dcg.cell(1);
+        let cell_inc = cell.clone();
+        let thunk = thunk!(dcg, cell_inc.read(), cell);
 
-        a.write(2);
+        cell.write(2);
 
         assert_eq!(thunk.query(), 2);
-        assert!(a.is_clean());
+        assert!(cell.is_clean());
         assert!(thunk.is_clean());
         let graph = dcg.graph.borrow();
-        assert!(!graph[graph.find_edge(a.idx(), thunk.idx()).unwrap()]);
+        assert!(!graph[graph.find_edge(cell.idx(), thunk.idx()).unwrap()]);
     }
 
     #[test]
@@ -681,8 +867,8 @@ mod tests {
 
         let circle = Dcg::new();
 
-        let radius = circle.cell(1.0);
-        let pos = circle.cell((0.0, 0.0));
+        let radius = circle.cell(1.);
+        let pos = circle.cell((0., 0.));
 
         let radius_inc = radius.clone();
         let area = memo!(
@@ -715,24 +901,24 @@ mod tests {
         assert!(left_bound.is_clean());
 
         assert_eq!(area.query(), PI);
-        assert_eq!(circum.query(), 2.0 * PI);
-        assert_eq!(left_bound.query(), (-1.0, 0.0));
+        assert_eq!(circum.query(), 2. * PI);
+        assert_eq!(left_bound.query(), (-1., 0.));
 
         assert!(radius.is_clean());
         assert!(area.is_clean());
         assert!(circum.is_clean());
         assert!(left_bound.is_clean());
 
-        assert_eq!(radius.write(2.0), 1.0);
+        assert_eq!(radius.write(2.), 1.);
 
         assert!(radius.is_dirty());
         assert!(area.is_dirty());
         assert!(circum.is_dirty());
         assert!(left_bound.is_dirty());
 
-        assert_eq!(area.query(), 4.0 * PI);
-        assert_eq!(circum.query(), 4.0 * PI);
-        assert_eq!(left_bound.query(), (-2.0, 0.0));
+        assert_eq!(area.query(), 4. * PI);
+        assert_eq!(circum.query(), 4. * PI);
+        assert_eq!(left_bound.query(), (-2., 0.));
     }
 
     #[test]
