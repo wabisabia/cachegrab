@@ -1,11 +1,161 @@
 #![warn(missing_docs)]
 
-//! `dcg` implements a demanded computation graph (DCG) used in incremental computation (IC).
+//! `dcg` implements a demanded computation graph ([`Dcg`]) used in incremental computation (IC).
 //!
 //! # Usage
 //!
+//! A [`Dcg`] can be used as a dependency-aware caching mechanism within structs:
+//!
 //! ```
-//! use dcg::Dcg;
+//! use dcg::{Dcg, Incremental, Cell, Memo, memo};
+//! # use std::f64::consts::PI;
+//!
+//! struct Circle {
+//!     radius: Cell<f64>, // `Cell`s hold data
+//!     area: Memo<f64>, // `Memo`s store functions and caches their results
+//! }
+//!
+//! impl Circle {
+//!     fn from_radius(radius: f64) -> Self {
+//!         let dcg = Dcg::new();
+//!         let radius = dcg.cell(radius);
+//!         let area = memo!(dcg, {
+//!             println!("Calculating area...");
+//!             PI * radius * radius
+//!         }, radius);
+//!         Self {
+//!             radius,
+//!             area,
+//!         }
+//!     }
+//! }
+//! ```
+//!
+//! All [`Dcg`] nodes' ([`Cell`], [`Thunk`], [`Memo`]) values can be retrieved with [`query`](Incremental::query):
+//!
+//! ```
+//! # use dcg::{Dcg, Incremental, Cell, Memo, memo};
+//! # use std::f64::consts::PI;
+//! #
+//! # struct Circle {
+//! #     radius: Cell<f64>, // `Cell`s hold data
+//! #     area: Memo<f64>, // `Memo`s store functions and caches their results
+//! # }
+//! #
+//! # impl Circle {
+//! #     fn from_radius(radius: f64) -> Self {
+//! #         let dcg = Dcg::new();
+//! #         let radius = dcg.cell(radius);
+//! #         let area = memo!(dcg, {
+//! #             println!("Calculating area...");
+//! #             PI * radius * radius
+//! #         }, radius);
+//! #         Self {
+//! #             radius,
+//! #             area,
+//! #         }
+//! #     }
+//! # }
+//! let circle = Circle::from_radius(1.);
+//! assert_eq!(circle.radius.query(), 1.);
+//! assert_eq!(circle.area.query(), PI); // "Calculating area..."
+//! assert_eq!(circle.area.query(), PI); // Nothing prints: we just used a cached value!
+//! ```
+//!
+//! Use [`write`](RawCell::write) and [`modify`](RawCell::modify) to change [`Cell`] values:
+//!
+//! ```
+//! # use dcg::{Dcg, Incremental, Cell, Memo, memo};
+//! # use std::f64::consts::PI;
+//! #
+//! # struct Circle {
+//! #     radius: Cell<f64>, // `Cell`s hold data
+//! #     area: Memo<f64>, // `Memo`s store functions and caches their results
+//! # }
+//! #
+//! # impl Circle {
+//! #     fn from_radius(radius: f64) -> Self {
+//! #         let dcg = Dcg::new();
+//! #         let radius = dcg.cell(radius);
+//! #         let area = memo!(dcg, {
+//! #             println!("Calculating area...");
+//! #             PI * radius * radius
+//! #         }, radius);
+//! #         Self {
+//! #             radius,
+//! #             area,
+//! #         }
+//! #     }
+//! # }
+//! # let circle = Circle::from_radius(1.);
+//! // Let's change `radius`...
+//! circle.radius.write(2.);
+//! assert_eq!(circle.radius.modify(|r| *r + 1.), 2.); // "change" methods yield the last [`Cell`] value
+//! assert_eq!(circle.radius.query(), 3.); // New radius is indeed 2 + 1 = 3
+//!
+//! // DCG saw `radius` change, so `area` is recomputed and cached
+//! assert_eq!(circle.area.query(), 9. * PI); // "Calculating area..."
+//! ```
+//!
+//! [`Dcg`] nodes can be shared between computations...
+//!
+//! ```
+//! # use dcg::{Dcg, Incremental, Cell, Memo, memo};
+//! # use std::f64::consts::PI;
+//! struct Circle {
+//!     # radius: Cell<f64>,
+//!     # area: Memo<f64>,
+//!     // ...
+//!     circumference: Memo<f64>,
+//! }
+//!
+//! impl Circle {
+//!     fn from_radius(radius: f64) -> Self {
+//!         let dcg = Dcg::new();
+//!         let radius = dcg.cell(radius);
+//!         let area = memo!(dcg, PI * radius * radius, radius);
+//!         let circumference = memo!(dcg, 2. * PI * radius, radius);
+//!         Self {
+//!             radius,
+//!             area,
+//!             circumference,
+//!         }
+//!     }
+//! }
+//! ```
+//!
+//! And can operate on heterogeneous types:
+//!
+//! ```
+//! # use dcg::{Dcg, Incremental, Cell, Memo, memo};
+//! # use std::f64::consts::PI;
+//! type Point = (f64, f64);
+//!
+//! struct Circle {
+//!     # radius: Cell<f64>,
+//!     // ..
+//!     pos: Cell<Point>,
+//!     bounding_box: Memo<(Point, f64, f64)>,
+//! }
+//!
+//! impl Circle {
+//!     fn from_radius(radius: f64) -> Self {
+//!         # let dcg = Dcg::new();
+//!         # let radius = dcg.cell(radius);
+//!         // ...
+//!         let pos = dcg.cell((0., 0.));
+//!         let bounding_box = memo!(dcg, {
+//!             let (x, y) = pos;
+//!             let half_radius = radius / 2.;
+//!             ((x - half_radius, y - half_radius), radius, radius)
+//!         }, radius, pos);
+//!         Self {
+//!             radius,
+//!             pos,
+//!             bounding_box,
+//!         }
+//!     }
+//! }
 //! ```
 
 use petgraph::{
@@ -201,9 +351,9 @@ impl Node {
         }
 
         let mut graph = self.graph.borrow_mut();
-        dependents.iter().for_each(|&node| {
+        for node in dependents {
             graph[node] = true;
-        });
+        }
     }
 
     /// Cleans the node's transitive dependencies.
@@ -225,9 +375,9 @@ impl Node {
         }
 
         let mut graph = self.graph.borrow_mut();
-        dependencies.iter().for_each(|&node| {
+        for node in dependencies {
             graph[node] = false;
-        });
+        }
     }
 }
 
@@ -324,17 +474,11 @@ impl<T: PartialEq> RawCell<T> {
     where
         F: FnOnce(&mut T) -> T,
     {
-        let mut value = self.value.borrow_mut();
-        let new = f(&mut value);
-
-        if *value == new {
-            return new;
+        let old_value = self.value.replace_with(f);
+        if old_value != *self.value.borrow() {
+            self.node.dirty_dependents();
         }
-
-        drop(value);
-
-        self.node.dirty_dependents();
-        self.value.replace(new)
+        old_value
     }
 }
 
