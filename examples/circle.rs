@@ -20,26 +20,14 @@ impl Circle {
         let radius = dcg.cell(radius);
         let pos = dcg.cell((0., 0.));
 
-        let radius_inc = radius.clone();
-        let circumference = memo!(dcg, 2. * PI * radius_inc.read(), radius);
+        let circumference = memo!(dcg, 2. * PI * radius, radius);
 
-        let radius_inc = radius.clone();
-        let area = memo!(
-            dcg,
-            {
-                let r = radius_inc.read();
-                std::f64::consts::PI * r * r
-            },
-            radius
-        );
+        let area = memo!(dcg, std::f64::consts::PI * radius * radius, radius);
 
-        let pos_inc = pos.clone();
-        let radius_inc = radius.clone();
         let bounding_box = memo!(
             dcg,
             {
-                let (x, y) = pos_inc.read();
-                let radius = radius_inc.read();
+                let (x, y) = pos;
                 let half_radius = radius / 2.;
                 ((x - half_radius, y - half_radius), radius, radius)
             },

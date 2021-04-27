@@ -1,17 +1,12 @@
 use criterion::{black_box, criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
-use dcg::{Dcg, Incremental};
+use dcg::{memo, thunk, Dcg, Incremental};
 use rand::{prelude::SliceRandom, rngs::SmallRng, SeedableRng};
 
 fn internals(c: &mut Criterion) {
     let dcg = Dcg::new();
-
     let cell = dcg.cell(1);
-
-    let cell_inc = cell.clone();
-    let memo = dcg.memo(move || cell_inc.read(), &[cell.idx()]);
-
-    let cell_inc = cell.clone();
-    let thunk = dcg.thunk(move || cell_inc.read(), &[cell.idx()]);
+    let memo = memo!(dcg, cell, cell);
+    let thunk = thunk!(dcg, cell, cell);
 
     let mut internals = c.benchmark_group("Internals");
 
@@ -23,7 +18,7 @@ fn internals(c: &mut Criterion) {
             || {
                 cell.write(1);
             },
-            |()| cell.write(2),
+            |_| cell.write(2),
             BatchSize::SmallInput,
         )
     });
@@ -56,7 +51,7 @@ fn internals(c: &mut Criterion) {
             || {
                 cell.write(if cell.query() == 1 { 2 } else { 2 });
             },
-            |()| memo.query(),
+            |_| memo.query(),
             BatchSize::SmallInput,
         )
     });
@@ -66,7 +61,7 @@ fn internals(c: &mut Criterion) {
             || {
                 cell.write(if cell.query() == 1 { 2 } else { 1 });
             },
-            |()| memo.read(),
+            |_| memo.read(),
             BatchSize::SmallInput,
         )
     });
@@ -88,18 +83,14 @@ fn filter_random_letter(c: &mut Criterion) {
 
         let mut rng = SmallRng::seed_from_u64(123);
 
-        let needle_inc = needle.clone();
-        let haystack_inc = haystack.clone();
-        let memo = dcg.memo(
-            move || {
-                let needle = needle_inc.read();
-                haystack_inc
-                    .read()
-                    .chars()
-                    .filter(|c| *c == needle)
-                    .collect::<String>()
-            },
-            &[needle.idx(), haystack.idx()],
+        let memo = memo!(
+            dcg,
+            haystack
+                .chars()
+                .filter(|c| *c == needle)
+                .collect::<String>(),
+            needle,
+            haystack
         );
 
         for size in sizes.iter() {
@@ -125,18 +116,14 @@ fn filter_random_letter(c: &mut Criterion) {
 
         let mut rng = SmallRng::seed_from_u64(123);
 
-        let needle_inc = needle.clone();
-        let haystack_inc = haystack.clone();
-        let thunk = dcg.thunk(
-            move || {
-                let needle = needle_inc.read();
-                haystack_inc
-                    .read()
-                    .chars()
-                    .filter(|c| *c == needle)
-                    .collect::<String>()
-            },
-            &[needle.idx(), haystack.idx()],
+        let thunk = thunk!(
+            dcg,
+            haystack
+                .chars()
+                .filter(|c| *c == needle)
+                .collect::<String>(),
+            needle,
+            haystack
         );
 
         for size in sizes.iter() {
