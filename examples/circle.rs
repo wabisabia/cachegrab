@@ -16,14 +16,10 @@ struct Circle {
 impl Circle {
     pub fn from_radius(radius: f64) -> Self {
         let dcg = Dcg::new();
-
         let radius = dcg.cell(radius);
         let pos = dcg.cell((0., 0.));
-
         let circumference = memo!(dcg, 2. * PI * radius, radius);
-
-        let area = memo!(dcg, std::f64::consts::PI * radius * radius, radius);
-
+        let area = memo!(dcg, PI * radius * radius, radius);
         let bounding_box = memo!(
             dcg,
             {
