@@ -1,5 +1,5 @@
+use cachegrab::{memo, thunk, Dcg, Incremental};
 use criterion::{black_box, criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
-use dcg::{memo, thunk, Dcg, Incremental};
 use rand::{prelude::SliceRandom, rngs::SmallRng, SeedableRng};
 
 fn internals(c: &mut Criterion) {

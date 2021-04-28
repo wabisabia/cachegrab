@@ -1,6 +1,6 @@
 #![warn(missing_docs)]
 
-//! `dcg` implements a demanded computation graph ([`Dcg`]) used in incremental computation (IC).
+//! `cachegrab` implements a demanded computation graph ([`Dcg`]) used in incremental computation (IC).
 //!
 //! # Usage
 //!

@@ -1,5 +1,5 @@
 [package]
-name = "dcg"
+name = "cachegrab"
 version = "0.1.0"
 authors = ["wabisabia"]
 edition = "2018"

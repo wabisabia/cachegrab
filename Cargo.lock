@@ -48,6 +48,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "14c189c53d098945499cdfa7ecc63567cf3886b3332b312a5b4585d8d3a6a610"
 
 [[package]]
+name = "cachegrab"
+version = "0.1.0"
+dependencies = [
+ "criterion",
+ "paste",
+ "petgraph",
+ "rand",
+]
+
+[[package]]
 name = "cast"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -174,16 +184,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2b2466559f260f48ad25fe6317b3c8dac77b5bdb5763ac7d9d6103530663bc90"
 dependencies = [
  "memchr",
-]
-
-[[package]]
-name = "dcg"
-version = "0.1.0"
-dependencies = [
- "criterion",
- "paste",
- "petgraph",
- "rand",
 ]
 
 [[package]]
