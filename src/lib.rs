@@ -31,7 +31,7 @@
 //! }
 //! ```
 //!
-//! All [`Dcg`] nodes' ([`Cell`], [`Thunk`], [`Memo`]) values can be retrieved with [`query`](Incremental::query):
+//! All [`Dcg`] nodes' ([`Cell`], [`Thunk`], [`Memo`]) values can be retrieved with [`read`](Incremental::read):
 //!
 //! ```
 //! # use dcg::{Dcg, Incremental, Cell, Memo, memo};
@@ -57,9 +57,9 @@
 //! #     }
 //! # }
 //! let circle = Circle::from_radius(1.);
-//! assert_eq!(circle.radius.query(), 1.);
-//! assert_eq!(circle.area.query(), PI); // "Calculating area..."
-//! assert_eq!(circle.area.query(), PI); // Nothing prints: we just used a cached value!
+//! assert_eq!(circle.radius.read(), 1.);
+//! assert_eq!(circle.area.read(), PI); // "Calculating area..."
+//! assert_eq!(circle.area.read(), PI); // Nothing prints: we just used a cached value!
 //! ```
 //!
 //! Use [`write`](RawCell::write) and [`modify`](RawCell::modify) to change [`Cell`] values:
@@ -91,10 +91,10 @@
 //! // Let's change `radius`...
 //! circle.radius.write(2.);
 //! assert_eq!(circle.radius.modify(|r| *r + 1.), 2.); // "change" methods yield the last [`Cell`] value
-//! assert_eq!(circle.radius.query(), 3.); // New radius is indeed 2 + 1 = 3
+//! assert_eq!(circle.radius.read(), 3.); // New radius is indeed 2 + 1 = 3
 //!
 //! // DCG saw `radius` change, so `area` is recomputed and cached
-//! assert_eq!(circle.area.query(), 9. * PI); // "Calculating area..."
+//! assert_eq!(circle.area.read(), 9. * PI); // "Calculating area..."
 //! ```
 //!
 //! [`Dcg`] nodes can be shared between computations...
@@ -161,7 +161,7 @@
 use petgraph::{
     dot::Dot,
     graph::{DiGraph, NodeIndex},
-    visit::{depth_first_search, Control, DfsEvent, Reversed},
+    visit::{depth_first_search, Control, DfsEvent},
 };
 
 use std::{cell::RefCell, fmt, rc::Rc};
@@ -200,7 +200,7 @@ impl Dcg {
 
     /// Creates a dirty [`Cell`], containing `value`.
     ///
-    /// The [`Cell`] starts dirty as it has never been queried.
+    /// The [`Cell`] starts dirty as it has never been read.
     ///
     /// # Examples
     ///
@@ -211,47 +211,66 @@ impl Dcg {
     /// let cell = dcg.cell(1);
     ///
     /// assert!(cell.is_dirty());
-    /// assert_eq!(cell.query(), 1);
+    /// assert_eq!(cell.read(), 1);
     /// assert!(cell.is_clean());
     /// ```
     pub fn cell<T>(&self, value: T) -> Cell<T> {
         Rc::new(RawCell {
             value: RefCell::new(value),
-            node: Node::from_dcg(self),
+            node: Node::from_dcg(self, true),
         })
     }
 
-    /// Creates a dirty [`Thunk`] storing `f` and registers `deps` as its dependencies in the
-    /// [`Dcg`].
+    /// Creates a dirty [`Thunk`] storing `f` and registers `deps` as its dependencies in the [`Dcg`].
     ///
-    /// The [`Thunk`] starts dirty as it has never been queried.
+    /// The [`Thunk`] starts dirty as it has never been read.
     ///
-    /// # **NOTE ⚠**
+    /// If caching behaviour is desired, use [`Dcg::memo`] or [`memo!`] instead.
     ///
-    /// It is almost always preferable to use [`thunk!`].
-    /// [`Dcg::thunk`] is error-prone as it requires the user to remember to manually clone dependencies, move
-    /// them into the defined closure and read from them.
+    /// # Warning ⚠
     ///
-    /// If caching behaviour is desired, use [`memo!`] instead.
+    /// It is always preferable to use [`thunk!`] instead of this method; [`thunk!`] is strictly as
+    /// expressive and doesn't require you to jump through the following hoops:
+    ///
+    /// - Clone any dependencies.
+    /// - `move` them into the closure.
+    /// - List their indices in `dep`.
     ///
     /// # Examples
+    ///
+    /// Creating [`Thunk`]s using [`Dcg::thunk`] is _highly_ discouraged (see [`thunk!`]s documentation). That said, this is how to create
+    /// [`Thunk`]s using [`Dcg::thunk`]:
     ///
     /// ```
     /// use dcg::{Dcg, Incremental, thunk};
     ///
     /// let dcg = Dcg::new();
-    /// let cell = dcg.cell(1);
-    /// let thunk = thunk!(dcg, cell + 1, cell);
+    /// let numerator = dcg.cell(1);
+    /// let denominator = dcg.cell(1);
+    /// let numerator_inc = numerator.clone();
+    /// let denominator_inc = denominator.clone();
+    /// let safe_div = dcg.thunk(
+    ///     move || {
+    ///         let denominator = denominator_inc.read();
+    ///         if denominator == 0 {
+    ///             None
+    ///         } else {
+    ///             Some(numerator_inc.read() / denominator)
+    ///         }
+    ///     },
+    ///     &[numerator.idx(), denominator.idx()],
+    /// );
     ///
-    /// assert!(thunk.is_dirty());
-    /// assert_eq!(thunk.query(), 2);
-    /// assert!(thunk.is_clean());
+    /// assert_eq!(safe_div.read(), Some(1));
+    /// denominator.write(0);
+    /// // numerator doesn't have to be- and isn't- executed!
+    /// assert_eq!(safe_div.read(), None);
     /// ```
     pub fn thunk<T, F>(&self, f: F, deps: &[NodeIndex]) -> Thunk<T>
     where
         F: Fn() -> T + 'static,
     {
-        let node = Node::from_dcg(self);
+        let node = Node::from_dcg(self, true);
         self.add_dependencies(&node, deps);
         Rc::new(RawThunk {
             f: Rc::new(f),
@@ -259,39 +278,55 @@ impl Dcg {
         })
     }
 
-    /// Creates a dirty [`Memo`] storing f and registers `deps` as its dependencies in the [`Dcg`].
+    /// Creates a clean [`Memo`] storing `f`, cleans its transitive dependencies and registers `deps` as its dependencies in the [`Dcg`].
     ///
-    /// This method queries the newly created node to generate an initial cached value, so the node
-    /// and its dependencies will be cleaned.
+    /// The [`Memo`] and its dependencies will be cleaned because `f` is called to provide an initial cache value.
     ///
-    /// # **NOTE ⚠**
+    /// If non-caching behaviour is desired, use [`Dcg::thunk`] or [`thunk!`] instead.
     ///
-    /// It is almost always preferable to use [`memo!`].
-    /// [`Dcg::memo`] is error-prone as it requires the user to remember to manually clone dependencies, move
-    /// them into the defined closure and read from them.
+    /// # Warning ⚠
     ///
-    /// If a non-caching behaviour is desired, use [`thunk!`] instead.
+    /// It is always preferable to use [`memo!`] instead of this method; [`memo!`] is strictly as powerful and doesn't require you to jump through the following hoops:
+    ///
+    /// - Clone any dependencies.
+    /// - `move` them into the closure.
+    /// - List their indices in `dep`.
     ///
     /// # Examples
     ///
+    /// Creating [`Memo`]s using [`Dcg::memo`] is _highly_ discouraged (see [`memo!`]s documentation). That said, this is how to create
+    /// [`Memo`]s using [`Dcg::memo`]:
+    ///
     /// ```
-    /// use dcg::{Dcg, Incremental, memo};
+    /// use dcg::{Dcg, Incremental};
     ///
     /// let dcg = Dcg::new();
-    /// let cell = dcg.cell(1);
-    /// let memo = memo!(dcg, cell + 1, cell);
+    /// let numerator = dcg.cell(1);
+    /// let denominator = dcg.cell(1);
+    /// let numerator_inc = numerator.clone();
+    /// let denominator_inc = denominator.clone();
+    /// let safe_div = dcg.memo(
+    ///     move || {
+    ///         let denominator = denominator_inc.read();
+    ///         if denominator == 0 {
+    ///             None
+    ///         } else {
+    ///             Some(numerator_inc.read() / denominator)
+    ///         }
+    ///     },
+    ///     &[numerator.idx(), denominator.idx()],
+    /// );
     ///
-    /// assert!(memo.is_dirty());
-    /// assert_eq!(memo.query(), 2);
-    /// assert!(memo.is_clean());
-    /// assert_eq!(cell.write(2), 1);
-    /// assert!(memo.is_dirty());
+    /// assert_eq!(safe_div.read(), Some(1));
+    /// denominator.write(0);
+    /// // numerator doesn't have to be- and isn't- executed!
+    /// assert_eq!(safe_div.read(), None);
     /// ```
-    pub fn memo<T: Clone, F>(&self, f: F, deps: &[NodeIndex]) -> Memo<T>
+    pub fn memo<T, F>(&self, f: F, deps: &[NodeIndex]) -> Memo<T>
     where
         F: Fn() -> T + 'static,
     {
-        let node = Node::from_dcg(self);
+        let node = Node::from_dcg(self, false);
         self.add_dependencies(&node, deps);
         let cached = RefCell::new(f());
         let memo = Rc::new(RawMemo {
@@ -322,10 +357,10 @@ struct Node {
 }
 
 impl Node {
-    fn from_dcg(dcg: &Dcg) -> Self {
+    fn from_dcg(dcg: &Dcg, dirty: bool) -> Self {
         Self {
             graph: dcg.graph.clone(),
-            idx: dcg.graph.borrow_mut().add_node(true),
+            idx: dcg.graph.borrow_mut().add_node(dirty),
         }
     }
 
@@ -353,30 +388,6 @@ impl Node {
         let mut graph = self.graph.borrow_mut();
         for node in dependents {
             graph[node] = true;
-        }
-    }
-
-    /// Cleans the node's transitive dependencies.
-    /// A DFS over the reversed graph from the node gathers dirty edges, pruning already clean ones, and cleans them.
-    fn clean_dependencies(&self) {
-        let mut dependencies = Vec::new();
-        {
-            let graph = self.graph.borrow();
-            let rev_graph = Reversed(&*graph);
-            depth_first_search(rev_graph, Some(self.idx), |event| {
-                if let DfsEvent::Discover(n, _) = event {
-                    if !graph[n] {
-                        return Control::Prune::<()>;
-                    }
-                    dependencies.push(n);
-                }
-                Control::Continue::<()>
-            });
-        }
-
-        let mut graph = self.graph.borrow_mut();
-        for node in dependencies {
-            graph[node] = false;
         }
     }
 }
@@ -425,17 +436,17 @@ impl<T: PartialEq> RawCell<T> {
     /// let cell = dcg.cell(1);
     ///
     /// // Ensures `cell` is clean
-    /// cell.query();
+    /// cell.read();
     ///
     /// // `cell` remains clean due to writing the same value
     /// assert_eq!(cell.write(1), 1);
     /// assert!(cell.is_clean());
-    /// assert_eq!(cell.query(), 1);
+    /// assert_eq!(cell.read(), 1);
     ///
     /// // `cell` dirtied due to writing a different value
     /// assert_eq!(cell.write(2), 1);
     /// assert!(cell.is_dirty());
-    /// assert_eq!(cell.query(), 2);
+    /// assert_eq!(cell.read(), 2);
     /// ```
     pub fn write(&self, new: T) -> T {
         if *self.value.borrow() == new {
@@ -458,17 +469,17 @@ impl<T: PartialEq> RawCell<T> {
     /// let cell = dcg.cell(1);
     ///
     /// // Ensure `cell` is clean
-    /// cell.query();
+    /// cell.read();
     ///
     /// // `cell` remains clean due to modify producing same value
     /// assert_eq!(cell.modify(|x| *x), 1);
     /// assert!(cell.is_clean());
-    /// assert_eq!(cell.query(), 1);
+    /// assert_eq!(cell.read(), 1);
     ///
     /// // `cell` dirtied due to modify producing different value
     /// assert_eq!(cell.modify(|x| *x + 1), 1);
     /// assert!(cell.is_dirty());
-    /// assert_eq!(cell.query(), 2);
+    /// assert_eq!(cell.read(), 2);
     /// ```
     pub fn modify<F>(&self, f: F) -> T
     where
@@ -529,38 +540,25 @@ impl<T> RawMemo<T> {
 ///
 /// `I` is either:
 ///
-/// - **clean**: no dependencies have changed, querying `I` yields the same [`Output`](Incremental::Output) as last query.
-/// - **dirty**: a dependency has changed, querying `I` computes a different [`Output`](Incremental::Output).
+/// - **clean**: no dependencies have changed, reading `I` yields the same [`Output`](Incremental::Output) as last read.
+/// - **dirty**: a dependency has changed, reading `I` computes a different [`Output`](Incremental::Output).
 ///
 /// `I`'s state can be interrogated using [`is_dirty`](Incremental::is_dirty) and [`is_clean`](Incremental::is_clean).
 ///
 /// [`Incremental`] provides separate methods for producing [`Output`](Incremental::Output)s:
 ///
 /// - [`read`](Incremental::read): simply returns the most up-to-date [`Output`](Incremental::Output).
-/// - [`query`](Incremental::query): does the same thing as [`read`](Incremental::read) but also cleans
+/// - [`read`](Incremental::read): does the same thing as [`read`](Incremental::read) but also cleans
 /// `I`'s dependencies once the [`Output`](Incremental::Output) has been retrieved.
 pub trait Incremental {
-    /// The type returned when reading or querying a node.
+    /// The type returned when reading or reading a node.
     type Output;
 
-    /// Returns the node's most up-to-date value.
-    ///
-    /// This method is **only** used when trying to retrieve a value _within an incremental computation_.
-    /// Otherwise, if a node's value is needed, use [`Incremental::query`] instead.
+    /// Cleans a node and returns its most up-to-date value.
     fn read(&self) -> Self::Output;
 
-    /// Cleans dependencies and returns the node's most up-to-date value.
-    ///
-    /// This method is used to interrogate incremental nodes to force their values to update.
-    /// If no dependency cleaning is required, consider using [`Incremental::read`].
-    fn query(&self) -> Self::Output;
-
     /// Returns `true` if the node is dirty.
-    ///
-    /// The default implementation requires that [`Incremental::is_clean`] is implemented and negates the result.
-    fn is_dirty(&self) -> bool {
-        !self.is_clean()
-    }
+    fn is_dirty(&self) -> bool;
 
     /// Returns `true` if the node is clean.
     ///
@@ -574,13 +572,8 @@ impl<T: Clone> Incremental for RawCell<T> {
     type Output = T;
 
     fn read(&self) -> Self::Output {
-        self.value.borrow().clone()
-    }
-
-    fn query(&self) -> Self::Output {
-        // does not require DFS clean because we know cell has no dependencies
         self.node.graph.borrow_mut()[self.idx()] = false;
-        self.read()
+        self.value.borrow().clone()
     }
 
     fn is_dirty(&self) -> bool {
@@ -592,15 +585,8 @@ impl<T> Incremental for RawThunk<T> {
     type Output = T;
 
     fn read(&self) -> Self::Output {
+        self.node.graph.borrow_mut()[self.idx()] = false;
         (self.f)()
-    }
-
-    fn query(&self) -> Self::Output {
-        let value = self.read();
-        if self.is_dirty() {
-            self.node.clean_dependencies();
-        }
-        value
     }
 
     fn is_dirty(&self) -> bool {
@@ -614,14 +600,7 @@ impl<T: Clone> Incremental for RawMemo<T> {
     fn read(&self) -> Self::Output {
         if self.is_dirty() {
             self.cached.replace((self.f)());
-        }
-        self.cached.borrow().clone()
-    }
-
-    fn query(&self) -> Self::Output {
-        if self.is_dirty() {
-            self.cached.replace((self.f)());
-            self.node.clean_dependencies();
+            self.node.graph.borrow_mut()[self.idx()] = false;
         }
         self.cached.borrow().clone()
     }
@@ -631,346 +610,368 @@ impl<T: Clone> Incremental for RawMemo<T> {
     }
 }
 
-/// Creates a [`Thunk`].
+/// Creates a dirty [`Thunk`].
 ///
-/// [`thunk!`] takes two or more arguments:
-/// - The first argument is an expression that evaluates to the [`Dcg`] in which the thunk will be created.
-/// - The second argument is an expression that the [`Thunk`] will use to generate values.
-/// - The remaining arguments should be the identifiers of any node referenced in the expression, a.k.a. the [`Thunk`]'s dependencies.
+/// [`thunk!`] takes two or more arguments.
+///
+/// The first argument is an expression that evaluates to the [`Dcg`] in which the thunk will be created.
+///
+/// The second argument is an expression that the [`Thunk`] will use to generate values.
+/// The identifier of any [`Cell`], [`Thunk`] or [`Memo`] in scope can be used in the expression as:
+///
+/// - An "unwrapped" value. These are used as if the node had been [`read`](Incremental::read). These precede `;` in the remaining arguments.
+/// - A "wrapped" value. These are used as if the node had not been [`read`](Incremental::read). These follow `;` in the remaining arguments.
+///
+/// # Warning ⚠
+///
+/// Dependencies referenced will always be read.
+/// If more control is required, e.g. conditionally reading a node, use
+/// [`thunk!`] instead.
+///
+/// # Examples
+///
+/// ```
+/// use dcg::{Dcg, Incremental, thunk};
+///
+/// let dcg = Dcg::new();
+/// let numerator = dcg.cell(1);
+/// let denominator = dcg.cell(1);
+/// let safe_div = thunk!(dcg, {
+///     if denominator == 0 {
+///         None
+///     } else {
+///         Some(numerator.read() / denominator)
+///     }
+/// }, denominator; numerator);
+///
+/// assert_eq!(safe_div.read(), Some(1));
+/// denominator.write(0);
+/// // numerator doesn't have to be- and isn't- executed!
+/// assert_eq!(safe_div.read(), None);
+/// ```
 #[macro_export]
 macro_rules! thunk {
-    ($dcg:expr, $thunk:expr, $($node:ident),*) => {{
+    ($dcg:expr, $thunk:expr, $($unwrapped:ident),*; $($wrapped:ident),*) => {{
         ::paste::paste! {
             $(
-                let [<$node _inc>] = $node.clone();
+                let [<$unwrapped _inc>] = $unwrapped.clone();
+            )*
+            $(
+                let $wrapped = $wrapped.clone();
+            )*
+            $(
+                let [<$wrapped _idx>] = $wrapped.idx();
             )*
         }
         $dcg.thunk(move || {
             ::paste::paste! {
                 $(
-                    let $node = [<$node _inc>].read();
+                    let $unwrapped = [<$unwrapped _inc>].read();
                 )*
             }
             $thunk
-        }, &[$($node.idx()),*])
+        }, &[$($unwrapped.idx()),*, ::paste::paste! { $([<$wrapped _idx>]),* }])
     }};
     ($dcg:expr, $thunk: expr) => {
         thunk!($dcg, $thunk, )
     };
-}
-
-/// Creates a [`Memo`].
-///
-/// [`memo!`] takes two or more arguments:
-/// - The first argument is an expression that evaluates to the [`Dcg`] in which the memo will be created.
-/// - The second argument is an expression that the [`Memo`] will use to generate values.
-/// - The remaining arguments should be the identifiers of any node referenced in the expression, a.k.a. the [`Memo`]'s dependencies.
-#[macro_export]
-macro_rules! memo {
-    ($dcg:expr, $memo:expr, $($node:ident),*) => {{
+    ($dcg:expr, $thunk:expr, $($unwrapped:ident),*) => {{
         ::paste::paste! {
             $(
-                let [<$node _inc>] = $node.clone();
+                let [<$unwrapped _inc>] = $unwrapped.clone();
+            )*
+        }
+        $dcg.thunk(move || {
+            ::paste::paste! {
+                $(
+                    let $unwrapped= [<$unwrapped _inc>].read();
+                )*
+            }
+            $thunk
+        }, &[$($unwrapped.idx()),*])
+    }};
+    ($dcg:expr, $thunk:expr; $($wrapped:ident),*) => {{
+        ::paste::paste! {
+            $(
+                let $wrapped = $wrapped.clone();
+            )*
+            $(
+                let [<$wrapped _idx>] = $wrapped.idx();
+            )*
+        }
+        $dcg.thunk(move || {
+            $thunk
+        }, &[::paste::paste! { $([<$wrapped _idx>]),* }])
+    }}
+}
+
+/// Creates a clean [`Memo`] and cleans its transitive dependencies.
+///
+/// [`memo!`] takes two or more arguments.
+///
+/// The first argument is an expression that evaluates to the [`Dcg`] in which the memo will be created.
+///
+/// The second argument is an expression that the [`Memo`] will use to generate values.
+/// The identifier of any [`Cell`], [`Thunk`] or [`Memo`] in scope can be used in the expression as:
+///
+/// - An "unwrapped" value. These are used as if the node had been [`read`](Incremental::read). These precede `;` in the remaining arguments.
+/// - A "wrapped" value. These are used as if the node had not been [`read`](Incremental::read). These follow `;` in the remaining arguments.
+///
+/// # Warning ⚠
+///
+/// Dependencies referenced will always be read.
+/// If more control is required, e.g. conditionally reading a node, use
+/// [`Dcg::memo`] instead.
+///
+/// # Examples
+///
+/// ```
+/// use dcg::{Dcg, Incremental, memo};
+///
+/// let dcg = Dcg::new();
+/// let numerator = dcg.cell(1);
+/// let denominator = dcg.cell(1);
+/// let safe_div = memo!(dcg, {
+///     if denominator == 0 {
+///         None
+///     } else {
+///         Some(numerator.read() / denominator)
+///     }
+/// }, denominator; numerator);
+///
+/// assert_eq!(safe_div.read(), Some(1));
+/// denominator.write(0);
+/// // numerator doesn't have to be- and isn't- executed!
+/// assert_eq!(safe_div.read(), None);
+/// ```
+#[macro_export]
+macro_rules! memo {
+    ($dcg:expr, $memo:expr, $($unwrapped:ident),*; $($wrapped:ident),*) => {{
+        ::paste::paste! {
+            $(
+                let [<$unwrapped _inc>] = $unwrapped.clone();
+            )*
+            $(
+                let $wrapped = $wrapped.clone();
+            )*
+            $(
+                let [<$wrapped _idx>] = $wrapped.idx();
             )*
         }
         $dcg.memo(move || {
             ::paste::paste! {
                 $(
-                    let $node = [<$node _inc>].read();
+                    let $unwrapped = [<$unwrapped _inc>].read();
                 )*
             }
             $memo
-        }, &[$($node.idx()),*])
+        }, &[$($unwrapped.idx()),*, ::paste::paste! { $([<$wrapped _idx>]),* }])
     }};
     ($dcg:expr, $memo:expr) => {
         memo!($dcg, $memo, )
     };
+    ($dcg:expr, $memo:expr, $($unwrapped:ident),*) => {{
+        ::paste::paste! {
+            $(
+                let [<$unwrapped _inc>] = $unwrapped.clone();
+            )*
+        }
+        $dcg.memo(move || {
+            ::paste::paste! {
+                $(
+                    let $unwrapped = [<$unwrapped _inc>].read();
+                )*
+            }
+            $memo
+        }, &[$($unwrapped.idx()),*])
+    }};
+    ($dcg:expr, $memo:expr; $($wrapped:ident),*) => {{
+        ::paste::paste! {
+            $(
+                let $wrapped = $wrapped.clone();
+            )*
+            $(
+                let [<$wrapped _idx>] = $wrapped.idx();
+            )*
+        }
+        $dcg.memo(move || {
+            $memo
+        }, &[::paste::paste! { $([<$wrapped _idx>]),* }])
+    }};
 }
 
 #[cfg(test)]
 mod tests {
+    use std::cell;
+
     use super::*;
 
     #[test]
     fn create_cell() {
         let dcg = Dcg::new();
 
-        let cell = dcg.cell(1);
+        let c = dcg.cell(1);
 
         assert_eq!(dcg.graph.borrow().node_count(), 1);
-        assert!(cell.is_dirty());
+        assert!(c.is_dirty());
     }
 
     #[test]
     fn create_thunk() {
         let dcg = Dcg::new();
-        let thunk = dcg.thunk(|| (), &[]);
+
+        let t = dcg.thunk(|| (), &[]);
 
         assert_eq!(dcg.graph.borrow().node_count(), 1);
-        assert!(thunk.is_dirty());
+        assert!(t.is_dirty());
     }
 
     #[test]
     fn create_memo() {
         let dcg = Dcg::new();
-        let memo = dcg.memo(|| (), &[]);
+
+        let m = dcg.memo(|| (), &[]);
 
         assert_eq!(dcg.graph.borrow().node_count(), 1);
-        assert!(memo.is_dirty());
+        assert!(m.is_clean());
     }
 
     #[test]
     fn create_thunk_macro() {
         let dcg = Dcg::new();
-        let thunk = thunk!(dcg, 1);
+
+        let t = thunk!(dcg, 1);
 
         assert_eq!(dcg.graph.borrow().node_count(), 1);
-        assert!(thunk.is_dirty());
+        assert!(t.is_dirty());
     }
 
     #[test]
     fn create_memo_macro() {
         let dcg = Dcg::new();
-        let memo = memo!(dcg, 1);
+
+        let m = memo!(dcg, 1);
 
         assert_eq!(dcg.graph.borrow().node_count(), 1);
-        assert!(memo.is_dirty());
+        assert!(m.is_clean());
     }
 
     #[test]
-    fn cell_query() {
+    fn cell_read() {
         let dcg = Dcg::new();
-        let cell = dcg.cell(1);
+        let c = dcg.cell(1);
 
-        assert_eq!(cell.query(), 1);
+        assert_eq!(c.read(), 1);
     }
 
     #[test]
-    fn thunk_query() {
+    fn thunk_read() {
         let dcg = Dcg::new();
-        let thunk = thunk!(dcg, 1);
+        let t = thunk!(dcg, 1);
 
-        assert_eq!(thunk.query(), 1);
+        assert_eq!(t.read(), 1);
     }
 
     #[test]
-    fn memo_query() {
+    fn memo_read() {
         let dcg = Dcg::new();
-        let memo = memo!(dcg, 1);
+        let m = memo!(dcg, 1);
 
-        assert_eq!(memo.query(), 1);
+        assert_eq!(m.read(), 1);
     }
 
     #[test]
     fn cell_write() {
         let dcg = Dcg::new();
-        let cell = dcg.cell(1);
+        let c = dcg.cell(1);
+        let m1 = memo!(dcg, c, c);
+        let m2 = memo!(dcg, m1, m1);
+        let m3 = memo!(dcg, c, c);
+        let m4 = memo!(dcg, m3, m3);
+        dcg.graph.borrow_mut()[m3.idx()] = true;
 
-        assert_eq!(cell.write(2), 1);
-        assert_eq!(cell.query(), 2);
+        //   m1 --> m2
+        //  /
+        // c --> (m3) --> m4
+        assert_eq!(c.write(2), 1);
+
+        //   (m1) --> (m2)
+        //   /
+        // (c) --> (m3) --> m4
+        assert!(c.is_dirty());
+        assert!(m1.is_dirty());
+        assert!(m2.is_dirty());
+        assert!(m3.is_dirty());
+        assert!(m4.is_clean());
+        assert_eq!(c.read(), 2);
     }
 
     #[test]
-    fn cell_write_dirties() {
+    fn cell_modify() {
         let dcg = Dcg::new();
-        let cell = dcg.cell(1);
-        let thunk = thunk!(dcg, cell, cell);
-        thunk.query();
+        let c = dcg.cell(1);
+        let m1 = memo!(dcg, c, c);
+        let m2 = memo!(dcg, m1, m1);
+        let m3 = memo!(dcg, c, c);
+        let m4 = memo!(dcg, m3, m3);
+        dcg.graph.borrow_mut()[m3.idx()] = true;
 
-        cell.write(2);
+        //   m1 --> m2
+        //  /
+        // c --> (m3) --> m4
+        assert_eq!(c.modify(|x| *x + 1), 1);
 
-        assert!(cell.is_dirty());
-        assert!(thunk.is_dirty());
+        //   (m1) --> (m2)
+        //  /
+        // (c) --> (m3) --> m4
+        assert!(c.is_dirty());
+        assert!(m1.is_dirty());
+        assert!(m2.is_dirty());
+        assert!(m3.is_dirty());
+        assert!(m4.is_clean());
+        assert_eq!(c.read(), 2);
     }
 
     #[test]
-    fn write_dirties_deep() {
+    fn thunk_read_cleans() {
         let dcg = Dcg::new();
-        let cell = dcg.cell(1);
-        let thunk1 = thunk!(dcg, cell, cell);
-        let memo = memo!(dcg, thunk1, thunk1);
-        thunk1.query();
+        let c1 = dcg.cell(1);
+        let c2 = dcg.cell(1);
+        let t1 = thunk!(dcg, c1, c1);
+        let t2 = thunk!(dcg, c2, c2);
+        let t3 = thunk!(dcg, t1 + t2, t1, t2);
+        dcg.graph.borrow_mut()[t1.idx()] = false;
 
-        cell.write(2);
+        //        (c1) --> t1
+        //                   \
+        // (c2) --> (t2) --> (t3)
+        t3.read();
 
-        assert!(cell.is_dirty());
-        assert!(thunk1.is_dirty());
-        assert!(memo.is_dirty());
+        //     c1 --> t1
+        //              \
+        // c2 --> t2 --> t3
+        assert!(c1.is_clean());
+        assert!(c2.is_clean());
+        assert!(t1.is_clean());
+        assert!(t2.is_clean());
+        assert!(t3.is_clean());
     }
 
     #[test]
-    fn write_dirties_wide() {
-        let dcg = Dcg::new();
-        let cell = dcg.cell(1);
-        let thunk1 = thunk!(dcg, cell, cell);
-        let thunk2 = thunk!(dcg, cell, cell);
-        thunk1.query();
-        thunk2.query();
-
-        cell.write(2);
-
-        assert!(thunk1.is_dirty());
-        assert!(thunk2.is_dirty());
-    }
-
-    #[test]
-    fn write_dirty_prunes() {
-        let dcg = Dcg::new();
-        let cell = dcg.cell(1);
-        let thunk1 = thunk!(dcg, cell, cell);
-        let thunk2 = thunk!(dcg, thunk1, thunk1);
-        dcg.graph.borrow_mut()[thunk2.idx()] = false;
-
-        // (cell) -- (thunk1) -- thunk2
-        //
-        // Modify cell
-        // If thunk2 remains clean after dirtying, we know it was pruned
-        cell.write(2);
-
-        assert!(cell.is_dirty());
-        assert!(thunk1.is_dirty());
-        assert!(thunk2.is_clean());
-    }
-
-    #[test]
-    fn write_dirty_doesnt_preemptively_prune() {
-        let dcg = Dcg::new();
-        let cell = dcg.cell(1);
-        let thunk1 = thunk!(dcg, cell, cell);
-        let thunk2 = thunk!(dcg, cell, cell);
-        let thunk3 = thunk!(dcg, thunk2, thunk2);
-        thunk1.query();
-        dcg.graph.borrow_mut()[thunk3.idx()] = false;
-
-        //      thunk1
-        //     /
-        // cell
-        //     \
-        //      (thunk2) -- thunk3
-        //
-        // Modify cell
-        // DFS discovers thunk2 then thunk1
-        // If thunk3 remains clean after dirtying and thunk1 was dirtied, we know thunk3 was pruned and thunk1 was still visited and dirtied
-        cell.write(2);
-
-        assert!(cell.is_dirty());
-        assert!(thunk1.is_dirty());
-        assert!(thunk2.is_dirty());
-        assert!(thunk3.is_clean());
-    }
-
-    #[test]
-    fn modify() {
-        let dcg = Dcg::new();
-        let cell = dcg.cell(1);
-
-        assert_eq!(cell.modify(|x| *x + 1), 1);
-        assert_eq!(cell.query(), 2);
-    }
-
-    #[test]
-    fn modify_dirties() {
-        let dcg = Dcg::new();
-        let cell = dcg.cell(1);
-        let thunk = thunk!(dcg, cell, cell);
-        thunk.query();
-
-        assert_eq!(cell.modify(|x| *x + 1), 1);
-        assert!(cell.is_dirty());
-        assert_eq!(cell.query(), 2);
-    }
-
-    #[test]
-    fn thunks_nest() {
-        let dcg = Dcg::new();
-        let cell = dcg.cell(1);
-        let thunk1 = thunk!(dcg, cell, cell);
-        let thunk2 = thunk!(dcg, cell, cell);
-        let thunk3 = thunk!(dcg, thunk1 + thunk2, thunk1, thunk2);
-
-        {
-            let graph = dcg.graph.borrow();
-            assert_eq!(graph.node_count(), 4);
-            assert!(graph.contains_edge(cell.idx(), thunk1.idx()));
-            assert!(graph.contains_edge(cell.idx(), thunk2.idx()));
-            assert!(graph.contains_edge(thunk1.idx(), thunk3.idx()));
-            assert!(graph.contains_edge(thunk2.idx(), thunk3.idx()));
-        }
-
-        assert!(cell.is_dirty());
-        assert!(thunk1.is_dirty());
-        assert!(thunk2.is_dirty());
-        assert!(thunk3.is_dirty());
-
-        assert_eq!(thunk1.query(), 1);
-        assert_eq!(thunk2.query(), 1);
-        assert_eq!(thunk3.query(), 2);
-    }
-
-    #[test]
-    fn memo_query_cleans() {
+    fn memo_read_cleans() {
         let dcg = Dcg::new();
         let cell = dcg.cell(1);
         let memo = memo!(dcg, cell, cell);
 
         cell.write(2);
 
-        assert_eq!(memo.query(), 2);
+        assert_eq!(memo.read(), 2);
         assert!(cell.is_clean());
         assert!(memo.is_clean());
     }
 
     #[test]
-    fn thunk_query_cleans() {
-        let dcg = Dcg::new();
-        let cell = dcg.cell(1);
-        let thunk = thunk!(dcg, cell, cell);
-
-        cell.write(2);
-
-        assert_eq!(thunk.query(), 2);
-        assert!(cell.is_clean());
-        assert!(thunk.is_clean());
-    }
-
-    #[test]
-    fn thunk_query_cleans_deep() {
-        let dcg = Dcg::new();
-        let cell = dcg.cell(1);
-        let thunk1 = thunk!(dcg, cell, cell);
-        let thunk2 = thunk!(dcg, thunk1, thunk1);
-
-        cell.write(2);
-        thunk2.query();
-
-        assert!(cell.is_clean());
-        assert!(thunk1.is_clean());
-        assert!(thunk2.is_clean());
-    }
-
-    #[test]
-    fn thunk_query_cleans_wide() {
-        let dcg = Dcg::new();
-        let cell = dcg.cell(1);
-        let thunk1 = thunk!(dcg, cell, cell);
-        let thunk2 = thunk!(dcg, cell, cell);
-
-        //      (thunk1)
-        //     /
-        // (cell)
-        //     \
-        //      (thunk2)
-
-        cell.write(2);
-        thunk2.query();
-
-        assert!(cell.is_clean());
-        assert!(thunk1.is_dirty());
-        assert!(thunk2.is_clean());
-    }
-
-    #[test]
-    fn memo_query_cleans_deep() {
+    fn memo_read_cleans_deep() {
         let dcg = Dcg::new();
         let cell = dcg.cell(1);
         let memo1 = memo!(dcg, cell, cell);
@@ -979,7 +980,7 @@ mod tests {
         // (cell) -- (memo1) -- (memo2)
 
         cell.write(2);
-        memo2.query();
+        memo2.read();
 
         assert!(cell.is_clean());
         assert!(memo1.is_clean());
@@ -987,7 +988,7 @@ mod tests {
     }
 
     #[test]
-    fn memo_query_cleans_wide() {
+    fn memo_read_cleans_wide() {
         let dcg = Dcg::new();
         let cell = dcg.cell(1);
         let memo1 = memo!(dcg, cell, cell);
@@ -1000,11 +1001,55 @@ mod tests {
         //      (memo2)
 
         cell.write(2);
-        memo2.query();
+        memo2.read();
 
         assert!(cell.is_clean());
         assert!(memo1.is_dirty());
         assert!(memo2.is_clean());
+    }
+
+    #[test]
+    fn conditional_execution() {
+        let dcg = Dcg::new();
+        let numerator = dcg.cell(1);
+        let denominator = dcg.cell(1);
+        let num_was_read = Rc::new(cell::Cell::new(false));
+        let numerator_inc = numerator.clone();
+        let denominator_inc = denominator.clone();
+        let num_was_read_inc = num_was_read.clone();
+        let safe_div = dcg.memo(
+            move || {
+                let denominator = denominator_inc.read();
+                if denominator == 0 {
+                    None
+                } else {
+                    num_was_read_inc.set(true);
+                    Some(numerator_inc.read() / denominator)
+                }
+            },
+            &[numerator.idx(), denominator.idx()],
+        );
+
+        // memo created
+        assert!(num_was_read.get());
+
+        num_was_read.set(false);
+
+        // cached value fetched
+        assert_eq!(safe_div.read(), Some(1));
+        assert!(!num_was_read.get());
+
+        // affected by change
+        denominator.write(2);
+        assert_eq!(safe_div.read(), Some(0));
+        assert!(num_was_read.get());
+
+        num_was_read.set(false);
+
+        // not affected by change
+        denominator.write(0);
+        assert_eq!(safe_div.read(), None);
+        assert!(!num_was_read.get());
     }
 
     #[test]
@@ -1030,14 +1075,14 @@ mod tests {
             radius
         );
 
-        assert!(radius.is_dirty());
-        assert!(area.is_dirty());
-        assert!(circum.is_dirty());
-        assert!(left_bound.is_dirty());
+        assert!(radius.is_clean());
+        assert!(area.is_clean());
+        assert!(circum.is_clean());
+        assert!(left_bound.is_clean());
 
-        assert_eq!(area.query(), PI);
-        assert_eq!(circum.query(), 2. * PI);
-        assert_eq!(left_bound.query(), (-1., 0.));
+        assert_eq!(area.read(), PI);
+        assert_eq!(circum.read(), 2. * PI);
+        assert_eq!(left_bound.read(), (-1., 0.));
 
         assert!(radius.is_clean());
         assert!(area.is_clean());
@@ -1051,9 +1096,9 @@ mod tests {
         assert!(circum.is_dirty());
         assert!(left_bound.is_dirty());
 
-        assert_eq!(area.query(), 4. * PI);
-        assert_eq!(circum.query(), 4. * PI);
-        assert_eq!(left_bound.query(), (-2., 0.));
+        assert_eq!(area.read(), 4. * PI);
+        assert_eq!(circum.read(), 4. * PI);
+        assert_eq!(left_bound.read(), (-2., 0.));
     }
 
     #[test]
@@ -1073,12 +1118,12 @@ mod tests {
             }
         }
 
-        assert_eq!(thunk_table[0].query(), 1);
-        assert_eq!(thunk_table[1].query(), 2);
+        assert_eq!(thunk_table[0].read(), 1);
+        assert_eq!(thunk_table[1].read(), 2);
 
         assert_eq!(nums[0].write(5), 1);
 
-        assert_eq!(thunk_table[0].query(), 25);
-        assert_eq!(thunk_table[1].query(), 10);
+        assert_eq!(thunk_table[0].read(), 25);
+        assert_eq!(thunk_table[1].read(), 10);
     }
 }

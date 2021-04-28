@@ -47,11 +47,11 @@ fn main() {
 
     println!(
         "{} {:?} {} {} {:?}",
-        circle.radius.query(),
-        circle.pos.query(),
-        circle.circumference.query(),
-        circle.area.query(),
-        circle.bounding_box.query(),
+        circle.radius.read(),
+        circle.pos.read(),
+        circle.circumference.read(),
+        circle.area.read(),
+        circle.bounding_box.read(),
     );
 
     circle.radius.write(2.);
@@ -60,11 +60,11 @@ fn main() {
 
     println!(
         "{} {:?} {} {} {:?}",
-        circle.radius.query(),
-        circle.pos.query(),
-        circle.circumference.query(),
-        circle.area.query(),
-        circle.bounding_box.query(),
+        circle.radius.read(),
+        circle.pos.read(),
+        circle.circumference.read(),
+        circle.area.read(),
+        circle.bounding_box.read(),
     );
 
     println!("{:?}", circle.dcg);

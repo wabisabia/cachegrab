@@ -10,7 +10,6 @@ fn internals(c: &mut Criterion) {
 
     let mut internals = c.benchmark_group("Internals");
 
-    internals.bench_function("query cell", |b| b.iter(|| cell.query()));
     internals.bench_function("read cell", |b| b.iter(|| cell.read()));
     internals.bench_function("write cell same", |b| b.iter(|| cell.write(1)));
     internals.bench_function("write cell changed", |b| {
@@ -32,34 +31,23 @@ fn internals(c: &mut Criterion) {
             BatchSize::SmallInput,
         )
     });
-    internals.bench_function("modify cell vs query-write", |b| {
+    internals.bench_function("modify cell vs read-write", |b| {
         b.iter_batched(
             || {
                 cell.write(1);
             },
-            |_| cell.write(cell.query() + 1),
+            |_| cell.write(cell.read() + 1),
             BatchSize::SmallInput,
         )
     });
 
-    internals.bench_function("query thunk", |b| b.iter(|| thunk.query()));
     internals.bench_function("read thunk", |b| b.iter(|| thunk.read()));
 
-    internals.bench_function("query memo same", |b| b.iter(|| memo.query()));
-    internals.bench_function("query memo changed", |b| {
-        b.iter_batched(
-            || {
-                cell.write(if cell.query() == 1 { 2 } else { 2 });
-            },
-            |_| memo.query(),
-            BatchSize::SmallInput,
-        )
-    });
     internals.bench_function("read memo same", |b| b.iter(|| memo.read()));
     internals.bench_function("read memo changed", |b| {
         b.iter_batched(
             || {
-                cell.write(if cell.query() == 1 { 2 } else { 1 });
+                cell.write(if cell.read() == 1 { 2 } else { 1 });
             },
             |_| memo.read(),
             BatchSize::SmallInput,
@@ -103,7 +91,7 @@ fn filter_random_letter(c: &mut Criterion) {
                     },
                     |c| {
                         needle.write(*c);
-                        memo.query();
+                        memo.read();
                     },
                     BatchSize::SmallInput,
                 )
@@ -136,7 +124,7 @@ fn filter_random_letter(c: &mut Criterion) {
                     },
                     |c| {
                         needle.write(*c);
-                        thunk.query();
+                        thunk.read();
                     },
                     BatchSize::SmallInput,
                 )
