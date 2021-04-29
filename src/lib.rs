@@ -671,39 +671,17 @@ macro_rules! thunk {
                 )*
             }
             $thunk
-        }, &[$($unwrapped.idx()),*, $crate::paste! { $([<$wrapped _idx>]),* }])
+        }, &[$($unwrapped.idx(),)* $crate::paste! { $([<$wrapped _idx>]),* }])
     }};
-    ($dcg:expr, $thunk: expr) => {
-        thunk!($dcg, $thunk, )
+    ($dcg:expr, $thunk:expr) => {
+        thunk!($dcg, $thunk,)
     };
-    ($dcg:expr, $thunk:expr, $($unwrapped:ident),*) => {{
-        $crate::paste! {
-            $(
-                let [<$unwrapped _inc>] = $unwrapped.clone();
-            )*
-        }
-        $dcg.thunk(move || {
-            $crate::paste! {
-                $(
-                    let $unwrapped= $crate::Incremental::read(&*[<$unwrapped _inc>]);
-                )*
-            }
-            $thunk
-        }, &[$($unwrapped.idx()),*])
-    }};
-    ($dcg:expr, $thunk:expr; $($wrapped:ident),*) => {{
-        $crate::paste! {
-            $(
-                let $wrapped = $wrapped.clone();
-            )*
-            $(
-                let [<$wrapped _idx>] = $wrapped.idx();
-            )*
-        }
-        $dcg.thunk(move || {
-            $thunk
-        }, &[$crate::paste! { $([<$wrapped _idx>]),* }])
-    }}
+    ($dcg:expr, $thunk:expr, $($unwrapped:ident),*) => {
+        thunk!($dcg, $thunk, $($unwrapped),*;)
+    };
+    ($dcg:expr, $thunk:expr; $($wrapped:ident),*) => {
+        thunk!($dcg, $thunk, ;$($wrapped),*)
+    }
 }
 
 /// Creates a clean [`Memo`] and cleans its transitive dependencies.
@@ -766,38 +744,16 @@ macro_rules! memo {
                 )*
             }
             $memo
-        }, &[$($unwrapped.idx()),*, $crate::paste! { $([<$wrapped _idx>]),* }])
+        }, &[$($unwrapped.idx(),)* $crate::paste! { $([<$wrapped _idx>]),* }])
     }};
     ($dcg:expr, $memo:expr) => {
-        memo!($dcg, $memo, )
+        memo!($dcg, $memo,)
     };
-    ($dcg:expr, $memo:expr, $($unwrapped:ident),*) => {{
-        $crate::paste! {
-            $(
-                let [<$unwrapped _inc>] = $unwrapped.clone();
-            )*
-        }
-        $dcg.memo(move || {
-            $crate::paste! {
-                $(
-                    let $unwrapped = $crate::Incremental::read(&*[<$unwrapped _inc>]);
-                )*
-            }
-            $memo
-        }, &[$($unwrapped.idx()),*])
-    }};
+    ($dcg:expr, $memo:expr, $($unwrapped:ident),*) => {
+        memo!($dcg, $memo, $($unwrapped),*;)
+    };
     ($dcg:expr, $memo:expr; $($wrapped:ident),*) => {{
-        $crate::paste! {
-            $(
-                let $wrapped = $wrapped.clone();
-            )*
-            $(
-                let [<$wrapped _idx>] = $wrapped.idx();
-            )*
-        }
-        $dcg.memo(move || {
-            $memo
-        }, &[$crate::paste! { $([<$wrapped _idx>]),* }])
+        memo!($dcg, $memo, ;$($wrapped),*)
     }};
 }
 
