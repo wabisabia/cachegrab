@@ -7,12 +7,12 @@
 //! A [`Dcg`] can be used as a dependency-aware caching mechanism within structs:
 //!
 //! ```
-//! use dcg::{Dcg, Incremental, Cell, Memo, memo};
+//! use cachegrab::{Dcg, Incremental, Cell, Memo, memo};
 //! # use std::f64::consts::PI;
 //!
 //! struct Circle {
 //!     radius: Cell<f64>, // `Cell`s hold data
-//!     area: Memo<f64>, // `Memo`s store functions and caches their results
+//!     area: Memo<f64>, // `Memo`s store functions and cache their results
 //! }
 //!
 //! impl Circle {
@@ -34,7 +34,7 @@
 //! All [`Dcg`] nodes' ([`Cell`], [`Thunk`], [`Memo`]) values can be retrieved with [`read`](Incremental::read):
 //!
 //! ```
-//! # use dcg::{Dcg, Incremental, Cell, Memo, memo};
+//! # use cachegrab::{Dcg, Incremental, Cell, Memo, memo};
 //! # use std::f64::consts::PI;
 //! #
 //! # struct Circle {
@@ -65,7 +65,7 @@
 //! Use [`write`](RawCell::write) and [`modify`](RawCell::modify) to change [`Cell`] values:
 //!
 //! ```
-//! # use dcg::{Dcg, Incremental, Cell, Memo, memo};
+//! # use cachegrab::{Dcg, Incremental, Cell, Memo, memo};
 //! # use std::f64::consts::PI;
 //! #
 //! # struct Circle {
@@ -100,7 +100,7 @@
 //! [`Dcg`] nodes can be shared between computations...
 //!
 //! ```
-//! # use dcg::{Dcg, Incremental, Cell, Memo, memo};
+//! # use cachegrab::{Dcg, Incremental, Cell, Memo, memo};
 //! # use std::f64::consts::PI;
 //! struct Circle {
 //!     # radius: Cell<f64>,
@@ -127,7 +127,7 @@
 //! And can operate on heterogeneous types:
 //!
 //! ```
-//! # use dcg::{Dcg, Incremental, Cell, Memo, memo};
+//! # use cachegrab::{Dcg, Incremental, Cell, Memo, memo};
 //! # use std::f64::consts::PI;
 //! type Point = (f64, f64);
 //!
@@ -189,7 +189,7 @@ impl Dcg {
     /// # Examples
     ///
     /// ```
-    /// use dcg::Dcg;
+    /// use cachegrab::Dcg;
     ///
     /// # #[allow(unused)]
     /// let dcg = Dcg::new();
@@ -205,7 +205,7 @@ impl Dcg {
     /// # Examples
     ///
     /// ```
-    /// use dcg::{Dcg, Incremental};
+    /// use cachegrab::{Dcg, Incremental};
     ///
     /// let dcg = Dcg::new();
     /// let cell = dcg.cell(1);
@@ -242,7 +242,7 @@ impl Dcg {
     /// [`Thunk`]s using [`Dcg::thunk`]:
     ///
     /// ```
-    /// use dcg::{Dcg, Incremental, thunk};
+    /// use cachegrab::{Dcg, Incremental, thunk};
     ///
     /// let dcg = Dcg::new();
     /// let numerator = dcg.cell(1);
@@ -298,7 +298,7 @@ impl Dcg {
     /// [`Memo`]s using [`Dcg::memo`]:
     ///
     /// ```
-    /// use dcg::{Dcg, Incremental};
+    /// use cachegrab::{Dcg, Incremental};
     ///
     /// let dcg = Dcg::new();
     /// let numerator = dcg.cell(1);
@@ -339,9 +339,9 @@ impl Dcg {
 
     fn add_dependencies(&self, node: &Node, deps: &[NodeIndex]) {
         let mut graph = self.graph.borrow_mut();
-        deps.iter().for_each(|&x| {
-            graph.add_edge(x, node.idx, ());
-        });
+        for &dep in deps {
+            graph.add_edge(dep, node.idx, ());
+        }
     }
 }
 
@@ -406,7 +406,7 @@ impl<T> RawCell<T> {
     /// # Examples
     ///
     /// ```
-    /// use dcg::{Dcg, Incremental, thunk};
+    /// use cachegrab::{Dcg, Incremental, thunk};
     /// use petgraph::graph::NodeIndex;
     ///
     /// let dcg = Dcg::new();
@@ -430,7 +430,7 @@ impl<T: PartialEq> RawCell<T> {
     /// # Examples
     ///
     /// ```
-    /// use dcg::{Dcg, Incremental};
+    /// use cachegrab::{Dcg, Incremental};
     ///
     /// let dcg = Dcg::new();
     /// let cell = dcg.cell(1);
@@ -463,7 +463,7 @@ impl<T: PartialEq> RawCell<T> {
     /// # Examples
     ///
     /// ```
-    /// use dcg::{Dcg, Incremental};
+    /// use cachegrab::{Dcg, Incremental};
     ///
     /// let dcg = Dcg::new();
     /// let cell = dcg.cell(1);
@@ -507,7 +507,7 @@ impl<T> RawThunk<T> {
     /// # Examples
     ///
     /// ```
-    /// use dcg::{Dcg, Incremental, thunk};
+    /// use cachegrab::{Dcg, Incremental, thunk};
     /// use petgraph::graph::NodeIndex;
     ///
     /// let dcg = Dcg::new();
@@ -631,7 +631,7 @@ impl<T: Clone> Incremental for RawMemo<T> {
 /// # Examples
 ///
 /// ```
-/// use dcg::{Dcg, Incremental, thunk};
+/// use cachegrab::{Dcg, Incremental, thunk};
 ///
 /// let dcg = Dcg::new();
 /// let numerator = dcg.cell(1);
@@ -726,7 +726,7 @@ macro_rules! thunk {
 /// # Examples
 ///
 /// ```
-/// use dcg::{Dcg, Incremental, memo};
+/// use cachegrab::{Dcg, Incremental, memo};
 ///
 /// let dcg = Dcg::new();
 /// let numerator = dcg.cell(1);
