@@ -1,13 +1,13 @@
 use std::f64::consts::PI;
 
-use cachegrab::{memo, Cell, Dcg, Incremental, Memo};
+use cachegrab::{memo, Dcg, Incremental, Memo, Var};
 
 type Point = (f64, f64);
 
 struct Circle {
     dcg: Dcg,
-    pos: Cell<Point>,
-    radius: Cell<f64>,
+    pos: Var<Point>,
+    radius: Var<f64>,
     circumference: Memo<f64>,
     area: Memo<f64>,
     bounding_box: Memo<(Point, f64, f64)>,
@@ -16,8 +16,8 @@ struct Circle {
 impl Circle {
     pub fn from_radius(radius: f64) -> Self {
         let dcg = Dcg::new();
-        let radius = dcg.cell(radius);
-        let pos = dcg.cell((0., 0.));
+        let radius = dcg.var(radius);
+        let pos = dcg.var((0., 0.));
         let circumference = memo!(dcg, 2. * PI * radius, radius);
         let area = memo!(dcg, PI * radius * radius, radius);
         let bounding_box = memo!(

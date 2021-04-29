@@ -4,7 +4,7 @@ use rand::{prelude::SliceRandom, rngs::SmallRng, SeedableRng};
 
 fn internals(c: &mut Criterion) {
     let dcg = Dcg::new();
-    let cell = dcg.cell(1);
+    let cell = dcg.var(1);
     let memo = memo!(dcg, cell, cell);
     let thunk = thunk!(dcg, cell, cell);
 
@@ -58,8 +58,8 @@ fn internals(c: &mut Criterion) {
 fn filter_random_letter(c: &mut Criterion) {
     let dcg = Dcg::new();
 
-    let needle = dcg.cell('a');
-    let haystack = dcg.cell("the quick brown fox jumped over the lazy dog");
+    let needle = dcg.var('a');
+    let haystack = dcg.var("the quick brown fox jumped over the lazy dog");
 
     let sizes = [2, 10, 100, 1000];
     let max_size = sizes[sizes.len() - 1];

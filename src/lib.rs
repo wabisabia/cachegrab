@@ -7,18 +7,18 @@
 //! A [`Dcg`] can be used as a dependency-aware caching mechanism within structs:
 //!
 //! ```
-//! use cachegrab::{Dcg, Incremental, Cell, Memo, memo};
+//! use cachegrab::{Dcg, Incremental, Var, Memo, memo};
 //! # use std::f64::consts::PI;
 //!
 //! struct Circle {
-//!     radius: Cell<f64>, // `Cell`s hold data
+//!     radius: Var<f64>, // `Var`s hold data
 //!     area: Memo<f64>, // `Memo`s store functions and cache their results
 //! }
 //!
 //! impl Circle {
 //!     fn from_radius(radius: f64) -> Self {
 //!         let dcg = Dcg::new();
-//!         let radius = dcg.cell(radius);
+//!         let radius = dcg.var(radius);
 //!         let area = memo!(dcg, {
 //!             println!("Calculating area...");
 //!             PI * radius * radius
@@ -31,21 +31,21 @@
 //! }
 //! ```
 //!
-//! All [`Dcg`] nodes' ([`Cell`], [`Thunk`], [`Memo`]) values can be retrieved with [`read`](Incremental::read):
+//! All [`Dcg`] nodes' ([`Var`], [`Thunk`], [`Memo`]) values can be retrieved with [`read`](Incremental::read):
 //!
 //! ```
-//! # use cachegrab::{Dcg, Incremental, Cell, Memo, memo};
+//! # use cachegrab::{Dcg, Incremental, Var, Memo, memo};
 //! # use std::f64::consts::PI;
 //! #
 //! # struct Circle {
-//! #     radius: Cell<f64>, // `Cell`s hold data
+//! #     radius: Var<f64>, // `Var`s hold data
 //! #     area: Memo<f64>, // `Memo`s store functions and caches their results
 //! # }
 //! #
 //! # impl Circle {
 //! #     fn from_radius(radius: f64) -> Self {
 //! #         let dcg = Dcg::new();
-//! #         let radius = dcg.cell(radius);
+//! #         let radius = dcg.var(radius);
 //! #         let area = memo!(dcg, {
 //! #             println!("Calculating area...");
 //! #             PI * radius * radius
@@ -62,21 +62,21 @@
 //! assert_eq!(circle.area.read(), PI); // Nothing prints: we just used a cached value!
 //! ```
 //!
-//! Use [`write`](RawCell::write) and [`modify`](RawCell::modify) to change [`Cell`] values:
+//! Use [`write`](RawVar::write) and [`modify`](RawVar::modify) to change [`Var`] values:
 //!
 //! ```
-//! # use cachegrab::{Dcg, Incremental, Cell, Memo, memo};
+//! # use cachegrab::{Dcg, Incremental, Var, Memo, memo};
 //! # use std::f64::consts::PI;
 //! #
 //! # struct Circle {
-//! #     radius: Cell<f64>, // `Cell`s hold data
+//! #     radius: Var<f64>, // `Var`s hold data
 //! #     area: Memo<f64>, // `Memo`s store functions and caches their results
 //! # }
 //! #
 //! # impl Circle {
 //! #     fn from_radius(radius: f64) -> Self {
 //! #         let dcg = Dcg::new();
-//! #         let radius = dcg.cell(radius);
+//! #         let radius = dcg.var(radius);
 //! #         let area = memo!(dcg, {
 //! #             println!("Calculating area...");
 //! #             PI * radius * radius
@@ -90,7 +90,7 @@
 //! # let circle = Circle::from_radius(1.);
 //! // Let's change `radius`...
 //! circle.radius.write(2.);
-//! assert_eq!(circle.radius.modify(|r| *r + 1.), 2.); // "change" methods yield the last [`Cell`] value
+//! assert_eq!(circle.radius.modify(|r| *r + 1.), 2.); // "change" methods yield the last [`Var`] value
 //! assert_eq!(circle.radius.read(), 3.); // New radius is indeed 2 + 1 = 3
 //!
 //! // DCG saw `radius` change, so `area` is recomputed and cached
@@ -100,10 +100,10 @@
 //! [`Dcg`] nodes can be shared between computations...
 //!
 //! ```
-//! # use cachegrab::{Dcg, Incremental, Cell, Memo, memo};
+//! # use cachegrab::{Dcg, Incremental, Var, Memo, memo};
 //! # use std::f64::consts::PI;
 //! struct Circle {
-//!     # radius: Cell<f64>,
+//!     # radius: Var<f64>,
 //!     # area: Memo<f64>,
 //!     // ...
 //!     circumference: Memo<f64>,
@@ -112,7 +112,7 @@
 //! impl Circle {
 //!     fn from_radius(radius: f64) -> Self {
 //!         let dcg = Dcg::new();
-//!         let radius = dcg.cell(radius);
+//!         let radius = dcg.var(radius);
 //!         let area = memo!(dcg, PI * radius * radius, radius);
 //!         let circumference = memo!(dcg, 2. * PI * radius, radius);
 //!         Self {
@@ -127,23 +127,23 @@
 //! And can operate on heterogeneous types:
 //!
 //! ```
-//! # use cachegrab::{Dcg, Incremental, Cell, Memo, memo};
+//! # use cachegrab::{Dcg, Incremental, Var, Memo, memo};
 //! # use std::f64::consts::PI;
 //! type Point = (f64, f64);
 //!
 //! struct Circle {
-//!     # radius: Cell<f64>,
+//!     # radius: Var<f64>,
 //!     // ..
-//!     pos: Cell<Point>,
+//!     pos: Var<Point>,
 //!     bounding_box: Memo<(Point, f64, f64)>,
 //! }
 //!
 //! impl Circle {
 //!     fn from_radius(radius: f64) -> Self {
 //!         # let dcg = Dcg::new();
-//!         # let radius = dcg.cell(radius);
+//!         # let radius = dcg.var(radius);
 //!         // ...
-//!         let pos = dcg.cell((0., 0.));
+//!         let pos = dcg.var((0., 0.));
 //!         let bounding_box = memo!(dcg, {
 //!             let (x, y) = pos;
 //!             let half_radius = radius / 2.;
@@ -174,8 +174,8 @@ pub struct Dcg {
     graph: Rc<RefCell<Graph>>,
 }
 
-/// Refines the concept of a shared [`RawCell`].
-pub type Cell<T> = Rc<RawCell<T>>;
+/// Refines the concept of a shared [`RawVar`].
+pub type Var<T> = Rc<RawVar<T>>;
 
 /// Refines the concept of a shared [`RawThunk`].
 pub type Thunk<T> = Rc<RawThunk<T>>;
@@ -198,9 +198,9 @@ impl Dcg {
         Default::default()
     }
 
-    /// Creates a dirty [`Cell`], containing `value`.
+    /// Creates a dirty [`Var`], containing `value`.
     ///
-    /// The [`Cell`] starts dirty as it has never been read.
+    /// The [`Var`] starts dirty as it has never been read.
     ///
     /// # Examples
     ///
@@ -208,14 +208,14 @@ impl Dcg {
     /// use cachegrab::{Dcg, Incremental};
     ///
     /// let dcg = Dcg::new();
-    /// let cell = dcg.cell(1);
+    /// let a = dcg.var(1);
     ///
-    /// assert!(cell.is_dirty());
-    /// assert_eq!(cell.read(), 1);
-    /// assert!(cell.is_clean());
+    /// assert!(a.is_dirty());
+    /// assert_eq!(a.read(), 1);
+    /// assert!(a.is_clean());
     /// ```
-    pub fn cell<T>(&self, value: T) -> Cell<T> {
-        Rc::new(RawCell {
+    pub fn var<T>(&self, value: T) -> Var<T> {
+        Rc::new(RawVar {
             value: RefCell::new(value),
             node: Node::from_dcg(self, true),
         })
@@ -245,8 +245,8 @@ impl Dcg {
     /// use cachegrab::{Dcg, Incremental, thunk};
     ///
     /// let dcg = Dcg::new();
-    /// let numerator = dcg.cell(1);
-    /// let denominator = dcg.cell(1);
+    /// let numerator = dcg.var(1);
+    /// let denominator = dcg.var(1);
     /// let numerator_inc = numerator.clone();
     /// let denominator_inc = denominator.clone();
     /// let safe_div = dcg.thunk(
@@ -301,8 +301,8 @@ impl Dcg {
     /// use cachegrab::{Dcg, Incremental};
     ///
     /// let dcg = Dcg::new();
-    /// let numerator = dcg.cell(1);
-    /// let denominator = dcg.cell(1);
+    /// let numerator = dcg.var(1);
+    /// let denominator = dcg.var(1);
     /// let numerator_inc = numerator.clone();
     /// let denominator_inc = denominator.clone();
     /// let safe_div = dcg.memo(
@@ -393,12 +393,12 @@ impl Node {
 }
 
 /// Queryable, writable incremental data-store.
-pub struct RawCell<T> {
+pub struct RawVar<T> {
     value: RefCell<T>,
     node: Node,
 }
 
-impl<T> RawCell<T> {
+impl<T> RawVar<T> {
     /// Retrieves the index of the corresponding DCG node.
     ///
     /// This used to indicate a dependency when creating a [`Thunk`] or [`Memo`]
@@ -410,21 +410,21 @@ impl<T> RawCell<T> {
     /// use petgraph::graph::NodeIndex;
     ///
     /// let dcg = Dcg::new();
-    /// let cell = dcg.cell(1);
-    /// let thunk = thunk!(dcg, cell, cell);
+    /// let a = dcg.var(1);
+    /// let thunk = thunk!(dcg, a, a);
     ///
-    /// assert_eq!(cell.idx(), NodeIndex::new(0));
+    /// assert_eq!(a.idx(), NodeIndex::new(0));
     /// ```
     pub fn idx(&self) -> NodeIndex {
         self.node.idx
     }
 }
 
-impl<T: PartialEq> RawCell<T> {
-    /// Writes a value into the cell and dirties its dependents if necessary.
+impl<T: PartialEq> RawVar<T> {
+    /// Writes a value into the [`Var`] and dirties its dependents if necessary.
     ///
     /// If `new` is equal to its current value, `new` is simply returned.
-    /// Otherwise, `new` will be swapped with the current value, the cell and its dependents will be
+    /// Otherwise, `new` will be swapped with the current value, the [`Var`] and its dependents will be
     /// dirtied and the old value will be returned.
     ///
     /// # Examples
@@ -433,20 +433,20 @@ impl<T: PartialEq> RawCell<T> {
     /// use cachegrab::{Dcg, Incremental};
     ///
     /// let dcg = Dcg::new();
-    /// let cell = dcg.cell(1);
+    /// let a = dcg.var(1);
     ///
-    /// // Ensures `cell` is clean
-    /// cell.read();
+    /// // Ensures `a` is clean
+    /// a.read();
     ///
-    /// // `cell` remains clean due to writing the same value
-    /// assert_eq!(cell.write(1), 1);
-    /// assert!(cell.is_clean());
-    /// assert_eq!(cell.read(), 1);
+    /// // `a` remains clean due to writing the same value
+    /// assert_eq!(a.write(1), 1);
+    /// assert!(a.is_clean());
+    /// assert_eq!(a.read(), 1);
     ///
-    /// // `cell` dirtied due to writing a different value
-    /// assert_eq!(cell.write(2), 1);
-    /// assert!(cell.is_dirty());
-    /// assert_eq!(cell.read(), 2);
+    /// // `a` dirtied due to writing a different value
+    /// assert_eq!(a.write(2), 1);
+    /// assert!(a.is_dirty());
+    /// assert_eq!(a.read(), 2);
     /// ```
     pub fn write(&self, new: T) -> T {
         if *self.value.borrow() == new {
@@ -457,7 +457,7 @@ impl<T: PartialEq> RawCell<T> {
         }
     }
 
-    /// Modifies the value in the cell, returning the value before modification and dirtying the node and
+    /// Modifies the value in the [`Var`], returning the value before modification and dirtying the node and
     /// its transitive dependents if the new value differs from the old value.
     ///
     /// # Examples
@@ -466,20 +466,20 @@ impl<T: PartialEq> RawCell<T> {
     /// use cachegrab::{Dcg, Incremental};
     ///
     /// let dcg = Dcg::new();
-    /// let cell = dcg.cell(1);
+    /// let a = dcg.var(1);
     ///
-    /// // Ensure `cell` is clean
-    /// cell.read();
+    /// // Ensure `a` is clean
+    /// a.read();
     ///
-    /// // `cell` remains clean due to modify producing same value
-    /// assert_eq!(cell.modify(|x| *x), 1);
-    /// assert!(cell.is_clean());
-    /// assert_eq!(cell.read(), 1);
+    /// // `a` remains clean due to modify producing same value
+    /// assert_eq!(a.modify(|x| *x), 1);
+    /// assert!(a.is_clean());
+    /// assert_eq!(a.read(), 1);
     ///
-    /// // `cell` dirtied due to modify producing different value
-    /// assert_eq!(cell.modify(|x| *x + 1), 1);
-    /// assert!(cell.is_dirty());
-    /// assert_eq!(cell.read(), 2);
+    /// // `a` dirtied due to modify producing different value
+    /// assert_eq!(a.modify(|x| *x + 1), 1);
+    /// assert!(a.is_dirty());
+    /// assert_eq!(a.read(), 2);
     /// ```
     pub fn modify<F>(&self, f: F) -> T
     where
@@ -568,7 +568,7 @@ pub trait Incremental {
     }
 }
 
-impl<T: Clone> Incremental for RawCell<T> {
+impl<T: Clone> Incremental for RawVar<T> {
     type Output = T;
 
     fn read(&self) -> Self::Output {
@@ -617,7 +617,7 @@ impl<T: Clone> Incremental for RawMemo<T> {
 /// The first argument is an expression that evaluates to the [`Dcg`] in which the thunk will be created.
 ///
 /// The second argument is an expression that the [`Thunk`] will use to generate values.
-/// The identifier of any [`Cell`], [`Thunk`] or [`Memo`] in scope can be used in the expression as:
+/// The identifier of any [`Var`], [`Thunk`] or [`Memo`] in scope can be used in the expression as:
 ///
 /// - An "unwrapped" value. These are used as if the node had been [`read`](Incremental::read). These precede `;` in the remaining arguments.
 /// - A "wrapped" value. These are used as if the node had not been [`read`](Incremental::read). These follow `;` in the remaining arguments.
@@ -634,8 +634,8 @@ impl<T: Clone> Incremental for RawMemo<T> {
 /// use cachegrab::{Dcg, Incremental, thunk};
 ///
 /// let dcg = Dcg::new();
-/// let numerator = dcg.cell(1);
-/// let denominator = dcg.cell(1);
+/// let numerator = dcg.var(1);
+/// let denominator = dcg.var(1);
 /// let safe_div = thunk!(dcg, {
 ///     if denominator == 0 {
 ///         None
@@ -712,7 +712,7 @@ macro_rules! thunk {
 /// The first argument is an expression that evaluates to the [`Dcg`] in which the memo will be created.
 ///
 /// The second argument is an expression that the [`Memo`] will use to generate values.
-/// The identifier of any [`Cell`], [`Thunk`] or [`Memo`] in scope can be used in the expression as:
+/// The identifier of any [`Var`], [`Thunk`] or [`Memo`] in scope can be used in the expression as:
 ///
 /// - An "unwrapped" value. These are used as if the node had been [`read`](Incremental::read). These precede `;` in the remaining arguments.
 /// - A "wrapped" value. These are used as if the node had not been [`read`](Incremental::read). These follow `;` in the remaining arguments.
@@ -729,8 +729,8 @@ macro_rules! thunk {
 /// use cachegrab::{Dcg, Incremental, memo};
 ///
 /// let dcg = Dcg::new();
-/// let numerator = dcg.cell(1);
-/// let denominator = dcg.cell(1);
+/// let numerator = dcg.var(1);
+/// let denominator = dcg.var(1);
 /// let safe_div = memo!(dcg, {
 ///     if denominator == 0 {
 ///         None
@@ -804,16 +804,18 @@ macro_rules! memo {
 mod tests {
     use std::cell;
 
+    use cell::Cell;
+
     use super::*;
 
     #[test]
-    fn create_cell() {
+    fn create_var() {
         let dcg = Dcg::new();
 
-        let c = dcg.cell(1);
+        let a = dcg.var(1);
 
         assert_eq!(dcg.graph.borrow().node_count(), 1);
-        assert!(c.is_dirty());
+        assert!(a.is_dirty());
     }
 
     #[test]
@@ -857,11 +859,11 @@ mod tests {
     }
 
     #[test]
-    fn cell_read() {
+    fn var_read() {
         let dcg = Dcg::new();
-        let c = dcg.cell(1);
+        let a = dcg.var(1);
 
-        assert_eq!(c.read(), 1);
+        assert_eq!(a.read(), 1);
     }
 
     #[test]
@@ -881,77 +883,77 @@ mod tests {
     }
 
     #[test]
-    fn cell_write() {
+    fn var_write() {
         let dcg = Dcg::new();
-        let c = dcg.cell(1);
-        let m1 = memo!(dcg, c, c);
+        let a = dcg.var(1);
+        let m1 = memo!(dcg, a, a);
         let m2 = memo!(dcg, m1, m1);
-        let m3 = memo!(dcg, c, c);
+        let m3 = memo!(dcg, a, a);
         let m4 = memo!(dcg, m3, m3);
         dcg.graph.borrow_mut()[m3.idx()] = true;
 
         //   m1 --> m2
         //  /
-        // c --> (m3) --> m4
-        assert_eq!(c.write(2), 1);
+        // a --> (m3) --> m4
+        assert_eq!(a.write(2), 1);
 
         //   (m1) --> (m2)
         //   /
-        // (c) --> (m3) --> m4
-        assert!(c.is_dirty());
+        // (a) --> (m3) --> m4
+        assert!(a.is_dirty());
         assert!(m1.is_dirty());
         assert!(m2.is_dirty());
         assert!(m3.is_dirty());
         assert!(m4.is_clean());
-        assert_eq!(c.read(), 2);
+        assert_eq!(a.read(), 2);
     }
 
     #[test]
-    fn cell_modify() {
+    fn var_modify() {
         let dcg = Dcg::new();
-        let c = dcg.cell(1);
-        let m1 = memo!(dcg, c, c);
+        let a = dcg.var(1);
+        let m1 = memo!(dcg, a, a);
         let m2 = memo!(dcg, m1, m1);
-        let m3 = memo!(dcg, c, c);
+        let m3 = memo!(dcg, a, a);
         let m4 = memo!(dcg, m3, m3);
         dcg.graph.borrow_mut()[m3.idx()] = true;
 
         //   m1 --> m2
         //  /
-        // c --> (m3) --> m4
-        assert_eq!(c.modify(|x| *x + 1), 1);
+        // a --> (m3) --> m4
+        assert_eq!(a.modify(|x| *x + 1), 1);
 
         //   (m1) --> (m2)
         //  /
-        // (c) --> (m3) --> m4
-        assert!(c.is_dirty());
+        // (a) --> (m3) --> m4
+        assert!(a.is_dirty());
         assert!(m1.is_dirty());
         assert!(m2.is_dirty());
         assert!(m3.is_dirty());
         assert!(m4.is_clean());
-        assert_eq!(c.read(), 2);
+        assert_eq!(a.read(), 2);
     }
 
     #[test]
     fn thunk_read_cleans() {
         let dcg = Dcg::new();
-        let c1 = dcg.cell(1);
-        let c2 = dcg.cell(1);
-        let t1 = thunk!(dcg, c1, c1);
-        let t2 = thunk!(dcg, c2, c2);
+        let a = dcg.var(1);
+        let b = dcg.var(1);
+        let t1 = thunk!(dcg, a, a);
+        let t2 = thunk!(dcg, b, b);
         let t3 = thunk!(dcg, t1 + t2, t1, t2);
         dcg.graph.borrow_mut()[t1.idx()] = false;
 
-        //        (c1) --> t1
+        //        (a) --> t1
         //                   \
-        // (c2) --> (t2) --> (t3)
+        // (b) --> (t2) --> (t3)
         t3.read();
 
-        //     c1 --> t1
+        //     a --> t1
         //              \
-        // c2 --> t2 --> t3
-        assert!(c1.is_clean());
-        assert!(c2.is_clean());
+        // b --> t2 --> t3
+        assert!(a.is_clean());
+        assert!(b.is_clean());
         assert!(t1.is_clean());
         assert!(t2.is_clean());
         assert!(t3.is_clean());
@@ -960,170 +962,65 @@ mod tests {
     #[test]
     fn memo_read_cleans() {
         let dcg = Dcg::new();
-        let cell = dcg.cell(1);
-        let memo = memo!(dcg, cell, cell);
+        let a = dcg.var(1);
+        let b = dcg.var(1);
+        let m1 = memo!(dcg, a, a);
+        let m2 = memo!(dcg, b, b);
+        let m3 = memo!(dcg, m1 + m2, m1, m2);
+        a.write(2);
+        b.write(2);
+        dcg.graph.borrow_mut()[m1.idx()] = false;
 
-        cell.write(2);
+        //        (a) --> m1
+        //                   \
+        // (b) --> (m2) --> (m3)
+        m3.read();
 
-        assert_eq!(memo.read(), 2);
-        assert!(cell.is_clean());
-        assert!(memo.is_clean());
-    }
-
-    #[test]
-    fn memo_read_cleans_deep() {
-        let dcg = Dcg::new();
-        let cell = dcg.cell(1);
-        let memo1 = memo!(dcg, cell, cell);
-        let memo2 = memo!(dcg, memo1, memo1);
-
-        // (cell) -- (memo1) -- (memo2)
-
-        cell.write(2);
-        memo2.read();
-
-        assert!(cell.is_clean());
-        assert!(memo1.is_clean());
-        assert!(memo2.is_clean());
-    }
-
-    #[test]
-    fn memo_read_cleans_wide() {
-        let dcg = Dcg::new();
-        let cell = dcg.cell(1);
-        let memo1 = memo!(dcg, cell, cell);
-        let memo2 = memo!(dcg, cell, cell);
-
-        //      (memo1)
-        //     /
-        // (cell)
-        //     \
-        //      (memo2)
-
-        cell.write(2);
-        memo2.read();
-
-        assert!(cell.is_clean());
-        assert!(memo1.is_dirty());
-        assert!(memo2.is_clean());
+        //     (a) --> m1
+        //              \
+        // b --> m2 --> m3
+        assert!(a.is_dirty());
+        assert!(b.is_clean());
+        assert!(m1.is_clean());
+        assert!(m2.is_clean());
+        assert!(m3.is_clean());
     }
 
     #[test]
     fn conditional_execution() {
         let dcg = Dcg::new();
-        let numerator = dcg.cell(1);
-        let denominator = dcg.cell(1);
-        let num_was_read = Rc::new(cell::Cell::new(false));
-        let numerator_inc = numerator.clone();
-        let denominator_inc = denominator.clone();
-        let num_was_read_inc = num_was_read.clone();
-        let safe_div = dcg.memo(
-            move || {
-                let denominator = denominator_inc.read();
-                if denominator == 0 {
-                    None
-                } else {
-                    num_was_read_inc.set(true);
-                    Some(numerator_inc.read() / denominator)
-                }
-            },
-            &[numerator.idx(), denominator.idx()],
-        );
+        let a = dcg.var(1);
+        let b = dcg.var(1);
+        let a_read = Rc::new(Cell::new(false));
+        let a_read_clone = a_read.clone();
+        let safe_div = memo!(dcg, {
+            if b == 0 {
+                None
+            } else {
+                a_read_clone.set(true);
+                Some(a.read() / b)
+            }
+        }, b; a);
 
         // memo created
-        assert!(num_was_read.get());
+        assert!(a_read.get());
 
-        num_was_read.set(false);
+        a_read.set(false);
 
         // cached value fetched
         assert_eq!(safe_div.read(), Some(1));
-        assert!(!num_was_read.get());
+        assert!(!a_read.get());
 
         // affected by change
-        denominator.write(2);
+        b.write(2);
         assert_eq!(safe_div.read(), Some(0));
-        assert!(num_was_read.get());
+        assert!(a_read.get());
 
-        num_was_read.set(false);
+        a_read.set(false);
 
         // not affected by change
-        denominator.write(0);
+        b.write(0);
         assert_eq!(safe_div.read(), None);
-        assert!(!num_was_read.get());
-    }
-
-    #[test]
-    fn geometry() {
-        use std::f64::consts::PI;
-
-        let circle = Dcg::new();
-
-        let radius = circle.cell(1.);
-        let pos = circle.cell((0., 0.));
-
-        let area = memo!(circle, PI * radius * radius, radius);
-
-        let circum = memo!(circle, 2. * PI * radius, radius);
-
-        let left_bound = memo!(
-            circle,
-            {
-                let (x, y) = pos;
-                (x - radius, y)
-            },
-            pos,
-            radius
-        );
-
-        assert!(radius.is_clean());
-        assert!(area.is_clean());
-        assert!(circum.is_clean());
-        assert!(left_bound.is_clean());
-
-        assert_eq!(area.read(), PI);
-        assert_eq!(circum.read(), 2. * PI);
-        assert_eq!(left_bound.read(), (-1., 0.));
-
-        assert!(radius.is_clean());
-        assert!(area.is_clean());
-        assert!(circum.is_clean());
-        assert!(left_bound.is_clean());
-
-        assert_eq!(radius.write(2.), 1.);
-
-        assert!(radius.is_dirty());
-        assert!(area.is_dirty());
-        assert!(circum.is_dirty());
-        assert!(left_bound.is_dirty());
-
-        assert_eq!(area.read(), 4. * PI);
-        assert_eq!(circum.read(), 4. * PI);
-        assert_eq!(left_bound.read(), (-2., 0.));
-    }
-
-    #[test]
-    fn multiplication_table() {
-        let dcg = Dcg::new();
-
-        let n: usize = 100;
-
-        let nums = (1..=n).map(|i| dcg.cell(i)).collect::<Vec<_>>();
-
-        let mut thunk_table = Vec::with_capacity(n.pow(2) / 2 + n);
-        for i in 0..n {
-            for j in i..n {
-                let x = &nums[i];
-                let y = &nums[j];
-                thunk_table.push(thunk!(dcg, x * y, x, y));
-            }
-        }
-
-        assert_eq!(thunk_table[0].read(), 1);
-        assert_eq!(thunk_table[1].read(), 2);
-
-        assert_eq!(nums[0].write(5), 1);
-
-        assert_eq!(thunk_table[0].read(), 25);
-        assert_eq!(thunk_table[1].read(), 10);
+        assert!(!a_read.get());
     }
 }

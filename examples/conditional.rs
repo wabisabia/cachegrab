@@ -2,8 +2,8 @@ use cachegrab::{thunk, Dcg, Incremental};
 
 fn main() {
     let dcg = Dcg::new();
-    let numerator = dcg.cell(1);
-    let denominator = dcg.cell(1);
+    let numerator = dcg.var(1);
+    let denominator = dcg.var(1);
     let safe_div = thunk!(dcg, {
         if denominator == 0 {
             None
