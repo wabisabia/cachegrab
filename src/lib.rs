@@ -90,11 +90,11 @@
 //! # let circle = Circle::from_radius(1.);
 //! // Let's change `radius`...
 //! circle.radius.write(2.);
-//! assert_eq!(circle.radius.modify(|r| *r + 1.), 2.); // "change" methods yield the last [`Var`] value
-//! assert_eq!(circle.radius.read(), 3.); // New radius is indeed 2 + 1 = 3
+//! assert_eq!(circle.radius.modify(|r| *r + 1.), 2.);  // "Change" methods return the last value
+//! assert_eq!(circle.radius.read(), 3.);               // New radius is indeed 3
 //!
-//! // DCG saw `radius` change, so `area` is recomputed and cached
-//! assert_eq!(circle.area.read(), 9. * PI); // "Calculating area..."
+//! // We changed `radius`, so `area` is re-computed and cached
+//! assert_eq!(circle.area.read(), 9. * PI);            // "Calculating area..."
 //! ```
 //!
 //! [`Dcg`] nodes can be shared between computations...
@@ -111,10 +111,11 @@
 //!
 //! impl Circle {
 //!     fn from_radius(radius: f64) -> Self {
-//!         let dcg = Dcg::new();
-//!         let radius = dcg.var(radius);
-//!         let area = memo!(dcg, PI * radius * radius, radius);
-//!         let circumference = memo!(dcg, 2. * PI * radius, radius);
+//!         # let dcg = Dcg::new();
+//!         # let radius = dcg.var(radius);
+//!         // ...
+//!         let area = memo!(dcg, PI * radius * radius, radius);        // radius used here
+//!         let circumference = memo!(dcg, 2. * PI * radius, radius);   // ... and here
 //!         Self {
 //!             radius,
 //!             area,
@@ -128,12 +129,11 @@
 //!
 //! ```
 //! # use cachegrab::{Dcg, Incremental, Var, Memo, memo};
-//! # use std::f64::consts::PI;
 //! type Point = (f64, f64);
 //!
 //! struct Circle {
 //!     # radius: Var<f64>,
-//!     // ..
+//!     // ...
 //!     pos: Var<Point>,
 //!     bounding_box: Memo<(Point, f64, f64)>,
 //! }
@@ -164,6 +164,7 @@ use petgraph::{
     visit::{depth_first_search, Control, DfsEvent},
 };
 
+pub use paste::paste;
 use std::{cell::RefCell, fmt, rc::Rc};
 
 type Graph = DiGraph<bool, ()>;
@@ -652,7 +653,7 @@ impl<T: Clone> Incremental for RawMemo<T> {
 #[macro_export]
 macro_rules! thunk {
     ($dcg:expr, $thunk:expr, $($unwrapped:ident),*; $($wrapped:ident),*) => {{
-        ::paste::paste! {
+        $crate::paste! {
             $(
                 let [<$unwrapped _inc>] = $unwrapped.clone();
             )*
@@ -664,34 +665,34 @@ macro_rules! thunk {
             )*
         }
         $dcg.thunk(move || {
-            ::paste::paste! {
+            $crate::paste! {
                 $(
-                    let $unwrapped = [<$unwrapped _inc>].read();
+                    let $unwrapped = $crate::Incremental::read(&*[<$unwrapped _inc>]);
                 )*
             }
             $thunk
-        }, &[$($unwrapped.idx()),*, ::paste::paste! { $([<$wrapped _idx>]),* }])
+        }, &[$($unwrapped.idx()),*, $crate::paste! { $([<$wrapped _idx>]),* }])
     }};
     ($dcg:expr, $thunk: expr) => {
         thunk!($dcg, $thunk, )
     };
     ($dcg:expr, $thunk:expr, $($unwrapped:ident),*) => {{
-        ::paste::paste! {
+        $crate::paste! {
             $(
                 let [<$unwrapped _inc>] = $unwrapped.clone();
             )*
         }
         $dcg.thunk(move || {
-            ::paste::paste! {
+            $crate::paste! {
                 $(
-                    let $unwrapped= [<$unwrapped _inc>].read();
+                    let $unwrapped= $crate::Incremental::read(&*[<$unwrapped _inc>]);
                 )*
             }
             $thunk
         }, &[$($unwrapped.idx()),*])
     }};
     ($dcg:expr, $thunk:expr; $($wrapped:ident),*) => {{
-        ::paste::paste! {
+        $crate::paste! {
             $(
                 let $wrapped = $wrapped.clone();
             )*
@@ -701,7 +702,7 @@ macro_rules! thunk {
         }
         $dcg.thunk(move || {
             $thunk
-        }, &[::paste::paste! { $([<$wrapped _idx>]),* }])
+        }, &[$crate::paste! { $([<$wrapped _idx>]),* }])
     }}
 }
 
@@ -747,7 +748,7 @@ macro_rules! thunk {
 #[macro_export]
 macro_rules! memo {
     ($dcg:expr, $memo:expr, $($unwrapped:ident),*; $($wrapped:ident),*) => {{
-        ::paste::paste! {
+        $crate::paste! {
             $(
                 let [<$unwrapped _inc>] = $unwrapped.clone();
             )*
@@ -759,34 +760,34 @@ macro_rules! memo {
             )*
         }
         $dcg.memo(move || {
-            ::paste::paste! {
+            $crate::paste! {
                 $(
-                    let $unwrapped = [<$unwrapped _inc>].read();
+                    let $unwrapped = $crate::Incremental::read(&*[<$unwrapped _inc>]);
                 )*
             }
             $memo
-        }, &[$($unwrapped.idx()),*, ::paste::paste! { $([<$wrapped _idx>]),* }])
+        }, &[$($unwrapped.idx()),*, $crate::paste! { $([<$wrapped _idx>]),* }])
     }};
     ($dcg:expr, $memo:expr) => {
         memo!($dcg, $memo, )
     };
     ($dcg:expr, $memo:expr, $($unwrapped:ident),*) => {{
-        ::paste::paste! {
+        $crate::paste! {
             $(
                 let [<$unwrapped _inc>] = $unwrapped.clone();
             )*
         }
         $dcg.memo(move || {
-            ::paste::paste! {
+            $crate::paste! {
                 $(
-                    let $unwrapped = [<$unwrapped _inc>].read();
+                    let $unwrapped = $crate::Incremental::read(&*[<$unwrapped _inc>]);
                 )*
             }
             $memo
         }, &[$($unwrapped.idx()),*])
     }};
     ($dcg:expr, $memo:expr; $($wrapped:ident),*) => {{
-        ::paste::paste! {
+        $crate::paste! {
             $(
                 let $wrapped = $wrapped.clone();
             )*
@@ -796,7 +797,7 @@ macro_rules! memo {
         }
         $dcg.memo(move || {
             $memo
-        }, &[::paste::paste! { $([<$wrapped _idx>]),* }])
+        }, &[$crate::paste! { $([<$wrapped _idx>]),* }])
     }};
 }
 
