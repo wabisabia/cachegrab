@@ -216,10 +216,7 @@ impl Dcg {
     /// assert!(a.is_clean());
     /// ```
     pub fn var<T>(&self, value: T) -> Var<T> {
-        Rc::new(RawVar {
-            value: RefCell::new(value),
-            node: Node::from_dcg(self, true),
-        })
+        Rc::new(RawVar::new(self, value))
     }
 
     /// Creates a dirty [`Thunk`] storing `f` and registers `deps` as its dependencies in the [`Dcg`].
@@ -271,12 +268,7 @@ impl Dcg {
     where
         F: Fn() -> T + 'static,
     {
-        let node = Node::from_dcg(self, true);
-        self.add_dependencies(&node, deps);
-        Rc::new(RawThunk {
-            f: Rc::new(f),
-            node,
-        })
+        Rc::new(RawThunk::new(self, f, deps))
     }
 
     /// Creates a clean [`Memo`] storing `f`, cleans its transitive dependencies and registers `deps` as its dependencies in the [`Dcg`].
@@ -327,22 +319,7 @@ impl Dcg {
     where
         F: Fn() -> T + 'static,
     {
-        let node = Node::from_dcg(self, false);
-        self.add_dependencies(&node, deps);
-        let cached = RefCell::new(f());
-        let memo = Rc::new(RawMemo {
-            f: Rc::new(f),
-            cached,
-            node,
-        });
-        memo
-    }
-
-    fn add_dependencies(&self, node: &Node, deps: &[NodeIndex]) {
-        let mut graph = self.graph.borrow_mut();
-        for &dep in deps {
-            graph.add_edge(dep, node.idx, ());
-        }
+        Rc::new(RawMemo::new(self, f, deps))
     }
 }
 
@@ -358,10 +335,17 @@ struct Node {
 }
 
 impl Node {
-    fn from_dcg(dcg: &Dcg, dirty: bool) -> Self {
+    fn new(dcg: &Dcg, dirty: bool) -> Self {
         Self {
             graph: dcg.graph.clone(),
             idx: dcg.graph.borrow_mut().add_node(dirty),
+        }
+    }
+
+    fn add_dependencies(&self, deps: &[NodeIndex]) {
+        let mut graph = self.graph.borrow_mut();
+        for &dep in deps {
+            graph.add_edge(dep, self.idx, ());
         }
     }
 
@@ -400,6 +384,13 @@ pub struct RawVar<T> {
 }
 
 impl<T> RawVar<T> {
+    fn new(dcg: &Dcg, value: T) -> Self {
+        Self {
+            value: RefCell::new(value),
+            node: Node::new(dcg, true),
+        }
+    }
+
     /// Retrieves the index of the corresponding DCG node.
     ///
     /// This used to indicate a dependency when creating a [`Thunk`] or [`Memo`]
@@ -501,6 +492,18 @@ pub struct RawThunk<T> {
 }
 
 impl<T> RawThunk<T> {
+    fn new<F>(dcg: &Dcg, f: F, deps: &[NodeIndex]) -> Self
+    where
+        F: Fn() -> T + 'static,
+    {
+        let node = Node::new(dcg, true);
+        node.add_dependencies(deps);
+        Self {
+            f: Rc::new(f),
+            node,
+        }
+    }
+
     /// Retrieves the index of the corresponding DCG node.
     ///
     /// This used to indicate a dependency when creating a [`Thunk`] or [`Memo`]
@@ -522,15 +525,23 @@ impl<T> RawThunk<T> {
 
 /// Queryable incremental caching compute node.
 pub struct RawMemo<T> {
-    f: Rc<dyn Fn() -> T + 'static>,
+    thunk: RawThunk<T>,
     cached: RefCell<T>,
-    node: Node,
 }
 
 impl<T> RawMemo<T> {
+    fn new<F>(dcg: &Dcg, f: F, deps: &[NodeIndex]) -> Self
+    where
+        F: Fn() -> T + 'static,
+    {
+        let thunk = RawThunk::new(dcg, f, deps);
+        let cached = RefCell::new(thunk.read());
+        Self { thunk, cached }
+    }
+
     /// Retrieves the index of the corresponding DCG node.
     pub fn idx(&self) -> NodeIndex {
-        self.node.idx
+        self.thunk.idx()
     }
 }
 
@@ -600,14 +611,13 @@ impl<T: Clone> Incremental for RawMemo<T> {
 
     fn read(&self) -> Self::Output {
         if self.is_dirty() {
-            self.cached.replace((self.f)());
-            self.node.graph.borrow_mut()[self.idx()] = false;
+            self.cached.replace(self.thunk.read());
         }
         self.cached.borrow().clone()
     }
 
     fn is_dirty(&self) -> bool {
-        self.node.is_dirty()
+        self.thunk.is_dirty()
     }
 }
 
