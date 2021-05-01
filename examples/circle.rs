@@ -18,18 +18,13 @@ impl Circle {
         let dcg = Dcg::new();
         let radius = dcg.var(radius);
         let pos = dcg.var((0., 0.));
-        let circumference = memo!(dcg, 2. * PI * radius, radius);
-        let area = memo!(dcg, PI * radius * radius, radius);
-        let bounding_box = memo!(
-            dcg,
-            {
-                let (x, y) = pos;
-                let half_radius = radius / 2.;
-                ((x - half_radius, y - half_radius), radius, radius)
-            },
-            pos,
-            radius
-        );
+        let circumference = memo!(dcg, radius => 2. * PI * radius);
+        let area = memo!(dcg, radius => PI * radius * radius);
+        let bounding_box = memo!(dcg, (pos, radius) => {
+            let (x, y) = pos;
+            let half_radius = radius / 2.;
+            ((x - half_radius, y - half_radius), radius, radius)
+        });
 
         Circle {
             dcg,

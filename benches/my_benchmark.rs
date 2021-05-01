@@ -5,8 +5,8 @@ use rand::{prelude::SliceRandom, rngs::SmallRng, SeedableRng};
 fn internals(c: &mut Criterion) {
     let dcg = Dcg::new();
     let cell = dcg.var(1);
-    let memo = memo!(dcg, cell, cell);
-    let thunk = thunk!(dcg, cell, cell);
+    let memo = memo!(dcg, cell);
+    let thunk = thunk!(dcg, cell);
 
     let mut internals = c.benchmark_group("Internals");
 
@@ -71,15 +71,12 @@ fn filter_random_letter(c: &mut Criterion) {
 
         let mut rng = SmallRng::seed_from_u64(123);
 
-        let memo = memo!(
-            dcg,
+        let memo = memo!(dcg, (needle, haystack) => {
             haystack
                 .chars()
                 .filter(|c| *c == needle)
-                .collect::<String>(),
-            needle,
-            haystack
-        );
+                .collect::<String>()
+        });
 
         for size in sizes.iter() {
             memo_group.bench_function(BenchmarkId::from_parameter(size), |b| {
@@ -104,15 +101,12 @@ fn filter_random_letter(c: &mut Criterion) {
 
         let mut rng = SmallRng::seed_from_u64(123);
 
-        let thunk = thunk!(
-            dcg,
+        let thunk = thunk!(dcg, (needle, haystack) => {
             haystack
                 .chars()
                 .filter(|c| *c == needle)
-                .collect::<String>(),
-            needle,
-            haystack
-        );
+                .collect::<String>()
+        });
 
         for size in sizes.iter() {
             thunk_group.bench_function(BenchmarkId::from_parameter(size), |b| {

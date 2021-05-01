@@ -1,6 +1,6 @@
 #![warn(missing_docs)]
 
-//! `cachegrab` implements a demanded computation graph ([`Dcg`]) used in incremental computation (IC).
+//! `cachegrab` provides [`Dcg`] (Demanded Computation Graph).
 //!
 //! # Usage
 //!
@@ -19,10 +19,11 @@
 //!     fn from_radius(radius: f64) -> Self {
 //!         let dcg = Dcg::new();
 //!         let radius = dcg.var(radius);
-//!         let area = memo!(dcg, {
+//!         // `Memo`s cache most recent value
+//!         let area = memo!(dcg, radius => {
 //!             println!("Calculating area...");
 //!             PI * radius * radius
-//!         }, radius);
+//!         }); // "Calculating area..."
 //!         Self {
 //!             radius,
 //!             area,
@@ -46,10 +47,10 @@
 //! #     fn from_radius(radius: f64) -> Self {
 //! #         let dcg = Dcg::new();
 //! #         let radius = dcg.var(radius);
-//! #         let area = memo!(dcg, {
+//! #         let area = memo!(dcg, (radius) => {
 //! #             println!("Calculating area...");
 //! #             PI * radius * radius
-//! #         }, radius);
+//! #         });
 //! #         Self {
 //! #             radius,
 //! #             area,
@@ -77,10 +78,10 @@
 //! #     fn from_radius(radius: f64) -> Self {
 //! #         let dcg = Dcg::new();
 //! #         let radius = dcg.var(radius);
-//! #         let area = memo!(dcg, {
+//! #         let area = memo!(dcg, radius => {
 //! #             println!("Calculating area...");
 //! #             PI * radius * radius
-//! #         }, radius);
+//! #         });
 //! #         Self {
 //! #             radius,
 //! #             area,
@@ -100,62 +101,12 @@
 //! [`Dcg`] nodes can be shared between computations...
 //!
 //! ```
-//! # use cachegrab::{Dcg, Incremental, Var, Memo, memo};
+//! # use cachegrab::{Dcg, memo};
 //! # use std::f64::consts::PI;
-//! struct Circle {
-//!     # radius: Var<f64>,
-//!     # area: Memo<f64>,
-//!     // ...
-//!     circumference: Memo<f64>,
-//! }
-//!
-//! impl Circle {
-//!     fn from_radius(radius: f64) -> Self {
-//!         # let dcg = Dcg::new();
-//!         # let radius = dcg.var(radius);
-//!         // ...
-//!         let area = memo!(dcg, PI * radius * radius, radius);        // radius used here
-//!         let circumference = memo!(dcg, 2. * PI * radius, radius);   // ... and here
-//!         Self {
-//!             radius,
-//!             area,
-//!             circumference,
-//!         }
-//!     }
-//! }
-//! ```
-//!
-//! And can operate on heterogeneous types:
-//!
-//! ```
-//! # use cachegrab::{Dcg, Incremental, Var, Memo, memo};
-//! type Point = (f64, f64);
-//!
-//! struct Circle {
-//!     # radius: Var<f64>,
-//!     // ...
-//!     pos: Var<Point>,
-//!     bounding_box: Memo<(Point, f64, f64)>,
-//! }
-//!
-//! impl Circle {
-//!     fn from_radius(radius: f64) -> Self {
-//!         # let dcg = Dcg::new();
-//!         # let radius = dcg.var(radius);
-//!         // ...
-//!         let pos = dcg.var((0., 0.));
-//!         let bounding_box = memo!(dcg, {
-//!             let (x, y) = pos;
-//!             let half_radius = radius / 2.;
-//!             ((x - half_radius, y - half_radius), radius, radius)
-//!         }, radius, pos);
-//!         Self {
-//!             radius,
-//!             pos,
-//!             bounding_box,
-//!         }
-//!     }
-//! }
+//! # let dcg = Dcg::new();
+//! # let radius = dcg.var(1.);
+//! let area = memo!(dcg, radius => PI * radius * radius);        // radius used here
+//! let circumference = memo!(dcg, radius => 2. * PI * radius);   // ... and here
 //! ```
 
 use petgraph::{
@@ -164,6 +115,7 @@ use petgraph::{
     visit::{depth_first_search, Control, DfsEvent},
 };
 
+#[doc(hidden)]
 pub use paste::paste;
 use std::{cell::RefCell, fmt, rc::Rc};
 
@@ -233,12 +185,6 @@ impl Dcg {
     /// - Clone any dependencies.
     /// - `move` them into the closure.
     /// - List their indices in `dep`.
-    ///
-    /// # Examples
-    ///
-    /// Creating [`Thunk`]s using [`Dcg::thunk`] is _highly_ discouraged (see [`thunk!`]s documentation). That said, this is how to create
-    /// [`Thunk`]s using [`Dcg::thunk`]:
-    ///
     /// ```
     /// use cachegrab::{Dcg, Incremental, thunk};
     ///
@@ -284,12 +230,6 @@ impl Dcg {
     /// - Clone any dependencies.
     /// - `move` them into the closure.
     /// - List their indices in `dep`.
-    ///
-    /// # Examples
-    ///
-    /// Creating [`Memo`]s using [`Dcg::memo`] is _highly_ discouraged (see [`memo!`]s documentation). That said, this is how to create
-    /// [`Memo`]s using [`Dcg::memo`]:
-    ///
     /// ```
     /// use cachegrab::{Dcg, Incremental};
     ///
@@ -403,7 +343,7 @@ impl<T> RawVar<T> {
     ///
     /// let dcg = Dcg::new();
     /// let a = dcg.var(1);
-    /// let thunk = thunk!(dcg, a, a);
+    /// let thunk = thunk!(dcg, a);
     ///
     /// assert_eq!(a.idx(), NodeIndex::new(0));
     /// ```
@@ -623,23 +563,21 @@ impl<T: Clone> Incremental for RawMemo<T> {
 
 /// Creates a dirty [`Thunk`].
 ///
-/// [`thunk!`] takes two or more arguments.
+/// The first argument is the [`Dcg`] in which the [`Thunk`] will be created.
 ///
-/// The first argument is an expression that evaluates to the [`Dcg`] in which the thunk will be created.
+/// The second argument specifies how the [`Thunk`] will generate values.
+/// It can be:
 ///
-/// The second argument is an expression that the [`Thunk`] will use to generate values.
-/// The identifier of any [`Var`], [`Thunk`] or [`Memo`] in scope can be used in the expression as:
-///
-/// - An "unwrapped" value. These are used as if the node had been [`read`](Incremental::read). These precede `;` in the remaining arguments.
-/// - A "wrapped" value. These are used as if the node had not been [`read`](Incremental::read). These follow `;` in the remaining arguments.
-///
-/// # Warning ⚠
-///
-/// Dependencies referenced will always be read.
-/// If more control is required, e.g. conditionally reading a node, use
-/// [`thunk!`] instead.
-///
-/// # Examples
+/// - An [`Incremental`]'s `ident`.
+/// - Of the form `params => expr` where
+///     - `params` is either
+///         - `(reads; unreads)` where `read` and `unread` are `,`-separated lists of [`Incremental`] `ident`s.
+///         - `read` - an [`Incremental`]'s `ident`.
+///         - `(reads)` where `reads` is a `,`-separated list of [`Incremental`] `ident`s.
+///     - `expr` is an expression that treats:
+///         - `read` params as if they were (`read`)[Incremental::read].
+///         - `unread` params as normal.
+/// - An `expr` (ideally not referencing an [`Incremental`]).
 ///
 /// ```
 /// use cachegrab::{Dcg, Incremental, thunk};
@@ -647,13 +585,13 @@ impl<T: Clone> Incremental for RawMemo<T> {
 /// let dcg = Dcg::new();
 /// let numerator = dcg.var(1);
 /// let denominator = dcg.var(1);
-/// let safe_div = thunk!(dcg, {
+/// let safe_div = thunk!(dcg, (denominator; numerator) => {
 ///     if denominator == 0 {
 ///         None
 ///     } else {
 ///         Some(numerator.read() / denominator)
 ///     }
-/// }, denominator; numerator);
+/// });
 ///
 /// assert_eq!(safe_div.read(), Some(1));
 /// denominator.write(0);
@@ -662,55 +600,58 @@ impl<T: Clone> Incremental for RawMemo<T> {
 /// ```
 #[macro_export]
 macro_rules! thunk {
-    ($dcg:expr, $thunk:expr, $($unwrapped:ident),*; $($wrapped:ident),*) => {{
+    ($dcg:expr, $read:ident) => {
+        thunk!($dcg, ($read) => $read)
+    };
+    ($dcg:expr, ($($read:ident),*; $($unread:ident),*) => $f:expr) => {{
         $crate::paste! {
             $(
-                let [<$unwrapped _inc>] = $unwrapped.clone();
+                let [<$read _clone>] = $read.clone();
             )*
             $(
-                let $wrapped = $wrapped.clone();
+                let $unread = $unread.clone();
             )*
             $(
-                let [<$wrapped _idx>] = $wrapped.idx();
+                let [<$unread _idx>] = $unread.idx();
             )*
         }
         $dcg.thunk(move || {
             $crate::paste! {
                 $(
-                    let $unwrapped = $crate::Incremental::read(&*[<$unwrapped _inc>]);
+                    let $read = $crate::Incremental::read(&*[<$read _clone>]);
                 )*
             }
-            $thunk
-        }, &[$($unwrapped.idx(),)* $crate::paste! { $([<$wrapped _idx>]),* }])
+            $f
+        }, &[$($read.idx(),)* $crate::paste! { $([<$unread _idx>]),* }])
     }};
-    ($dcg:expr, $thunk:expr) => {
-        thunk!($dcg, $thunk,)
+    ($dcg:expr, $read:ident => $f:expr) => {
+        thunk!($dcg, ($read) => $f)
     };
-    ($dcg:expr, $thunk:expr, $($unwrapped:ident),*) => {
-        thunk!($dcg, $thunk, $($unwrapped),*;)
+    ($dcg:expr, ($($read:ident),*) => $f:expr) => {
+        thunk!($dcg, ($($read),*;) => $f)
     };
-    ($dcg:expr, $thunk:expr; $($wrapped:ident),*) => {
-        thunk!($dcg, $thunk, ;$($wrapped),*)
-    }
+    ($dcg:expr, $f:expr) => {
+        thunk!($dcg, (;) => $f)
+    };
 }
 
 /// Creates a clean [`Memo`] and cleans its transitive dependencies.
 ///
-/// [`memo!`] takes two or more arguments.
+/// The first argument is the [`Dcg`] in which the [`Memo`] will be created.
 ///
-/// The first argument is an expression that evaluates to the [`Dcg`] in which the memo will be created.
+/// The second argument specifies how the [`Memo`] will generate values.
+/// It can be:
 ///
-/// The second argument is an expression that the [`Memo`] will use to generate values.
-/// The identifier of any [`Var`], [`Thunk`] or [`Memo`] in scope can be used in the expression as:
-///
-/// - An "unwrapped" value. These are used as if the node had been [`read`](Incremental::read). These precede `;` in the remaining arguments.
-/// - A "wrapped" value. These are used as if the node had not been [`read`](Incremental::read). These follow `;` in the remaining arguments.
-///
-/// # Warning ⚠
-///
-/// Dependencies referenced will always be read.
-/// If more control is required, e.g. conditionally reading a node, use
-/// [`Dcg::memo`] instead.
+/// - An [`Incremental`]'s `ident`; the [`Incremental`] is simply (`read`)[Incremental::read].
+/// - Of the form `params => expr` where
+///     - `params` can be
+///         - `(reads; unreads)` where `read` and `unread` are `,`-separated lists of [`Incremental`] `ident`s.
+///         - `read` - an [`Incremental`]'s `ident`.
+///         - `(reads)` where `reads` is a `,`-separated list of [`Incremental`] `ident`s.
+///     - `expr` is an expression that treats:
+///         - `read` params as if they were (`read`)[Incremental::read].
+///         - `unread` params as normal.
+/// - An `expr` (ideally not referencing an [`Incremental`]).
 ///
 /// # Examples
 ///
@@ -720,13 +661,13 @@ macro_rules! thunk {
 /// let dcg = Dcg::new();
 /// let numerator = dcg.var(1);
 /// let denominator = dcg.var(1);
-/// let safe_div = memo!(dcg, {
+/// let safe_div = memo!(dcg, (denominator; numerator) => {
 ///     if denominator == 0 {
 ///         None
 ///     } else {
 ///         Some(numerator.read() / denominator)
 ///     }
-/// }, denominator; numerator);
+/// });
 ///
 /// assert_eq!(safe_div.read(), Some(1));
 /// denominator.write(0);
@@ -735,36 +676,39 @@ macro_rules! thunk {
 /// ```
 #[macro_export]
 macro_rules! memo {
-    ($dcg:expr, $memo:expr, $($unwrapped:ident),*; $($wrapped:ident),*) => {{
+    ($dcg:expr, $read:ident) => {
+        memo!($dcg, ($read) => $read)
+    };
+    ($dcg:expr, ($($read:ident),*; $($unread:ident),*) => $f:expr) => {{
         $crate::paste! {
             $(
-                let [<$unwrapped _inc>] = $unwrapped.clone();
+                let [<$read _inc>] = $read.clone();
             )*
             $(
-                let $wrapped = $wrapped.clone();
+                let $unread = $unread.clone();
             )*
             $(
-                let [<$wrapped _idx>] = $wrapped.idx();
+                let [<$unread _idx>] = $unread.idx();
             )*
         }
         $dcg.memo(move || {
             $crate::paste! {
                 $(
-                    let $unwrapped = $crate::Incremental::read(&*[<$unwrapped _inc>]);
+                    let $read = $crate::Incremental::read(&*[<$read _inc>]);
                 )*
             }
-            $memo
-        }, &[$($unwrapped.idx(),)* $crate::paste! { $([<$wrapped _idx>]),* }])
+            $f
+        }, &[$($read.idx(),)* $crate::paste! { $([<$unread _idx>]),* }])
     }};
-    ($dcg:expr, $memo:expr) => {
-        memo!($dcg, $memo,)
+    ($dcg:expr, $read:ident => $f:expr) => {
+        memo!($dcg, ($read) => $f)
     };
-    ($dcg:expr, $memo:expr, $($unwrapped:ident),*) => {
-        memo!($dcg, $memo, $($unwrapped),*;)
+    ($dcg:expr, ($($read:ident),*) => $f:expr) => {
+        memo!($dcg, ($($read),*;) => $f)
     };
-    ($dcg:expr, $memo:expr; $($wrapped:ident),*) => {{
-        memo!($dcg, $memo, ;$($wrapped),*)
-    }};
+    ($dcg:expr, $f:expr) => {
+        memo!($dcg, (;) => $f)
+    };
 }
 
 #[cfg(test)]
@@ -789,26 +733,6 @@ mod tests {
     fn create_thunk() {
         let dcg = Dcg::new();
 
-        let t = dcg.thunk(|| (), &[]);
-
-        assert_eq!(dcg.graph.borrow().node_count(), 1);
-        assert!(t.is_dirty());
-    }
-
-    #[test]
-    fn create_memo() {
-        let dcg = Dcg::new();
-
-        let m = dcg.memo(|| (), &[]);
-
-        assert_eq!(dcg.graph.borrow().node_count(), 1);
-        assert!(m.is_clean());
-    }
-
-    #[test]
-    fn create_thunk_macro() {
-        let dcg = Dcg::new();
-
         let t = thunk!(dcg, 1);
 
         assert_eq!(dcg.graph.borrow().node_count(), 1);
@@ -816,7 +740,7 @@ mod tests {
     }
 
     #[test]
-    fn create_memo_macro() {
+    fn create_memo() {
         let dcg = Dcg::new();
 
         let m = memo!(dcg, 1);
@@ -853,10 +777,10 @@ mod tests {
     fn var_write() {
         let dcg = Dcg::new();
         let a = dcg.var(1);
-        let m1 = memo!(dcg, a, a);
-        let m2 = memo!(dcg, m1, m1);
-        let m3 = memo!(dcg, a, a);
-        let m4 = memo!(dcg, m3, m3);
+        let m1 = memo!(dcg, a);
+        let m2 = memo!(dcg, m1);
+        let m3 = memo!(dcg, a);
+        let m4 = memo!(dcg, m3);
         dcg.graph.borrow_mut()[m3.idx()] = true;
 
         //   m1 --> m2
@@ -879,10 +803,10 @@ mod tests {
     fn var_modify() {
         let dcg = Dcg::new();
         let a = dcg.var(1);
-        let m1 = memo!(dcg, a, a);
-        let m2 = memo!(dcg, m1, m1);
-        let m3 = memo!(dcg, a, a);
-        let m4 = memo!(dcg, m3, m3);
+        let m1 = memo!(dcg, a);
+        let m2 = memo!(dcg, m1);
+        let m3 = memo!(dcg, a);
+        let m4 = memo!(dcg, m3);
         dcg.graph.borrow_mut()[m3.idx()] = true;
 
         //   m1 --> m2
@@ -906,9 +830,9 @@ mod tests {
         let dcg = Dcg::new();
         let a = dcg.var(1);
         let b = dcg.var(1);
-        let t1 = thunk!(dcg, a, a);
-        let t2 = thunk!(dcg, b, b);
-        let t3 = thunk!(dcg, t1 + t2, t1, t2);
+        let t1 = thunk!(dcg, a);
+        let t2 = thunk!(dcg, b);
+        let t3 = thunk!(dcg, (t1, t2) => t1 + t2);
         dcg.graph.borrow_mut()[t1.idx()] = false;
 
         //        (a) --> t1
@@ -931,9 +855,9 @@ mod tests {
         let dcg = Dcg::new();
         let a = dcg.var(1);
         let b = dcg.var(1);
-        let m1 = memo!(dcg, a, a);
-        let m2 = memo!(dcg, b, b);
-        let m3 = memo!(dcg, m1 + m2, m1, m2);
+        let m1 = memo!(dcg, a);
+        let m2 = memo!(dcg, b);
+        let m3 = memo!(dcg, (m1, m2) => m1 + m2);
         a.write(2);
         b.write(2);
         dcg.graph.borrow_mut()[m1.idx()] = false;
@@ -960,14 +884,14 @@ mod tests {
         let b = dcg.var(1);
         let a_read = Rc::new(Cell::new(false));
         let a_read_clone = a_read.clone();
-        let safe_div = memo!(dcg, {
+        let safe_div = memo!(dcg, (b; a) => {
             if b == 0 {
                 None
             } else {
                 a_read_clone.set(true);
                 Some(a.read() / b)
             }
-        }, b; a);
+        });
 
         // memo created
         assert!(a_read.get());
