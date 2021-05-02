@@ -317,7 +317,7 @@ impl Node {
     }
 }
 
-/// Queryable, writable incremental data-store.
+/// Data-storing [`Dcg`] node.
 pub struct RawVar<T> {
     value: RefCell<T>,
     node: Node,
@@ -425,7 +425,7 @@ impl<T: PartialEq> RawVar<T> {
     }
 }
 
-/// Queryable incremental compute node.
+/// Naively re-computing [`Dcg`] node.
 pub struct RawThunk<T> {
     f: Box<dyn Fn() -> T + 'static>,
     node: Node,
@@ -463,7 +463,7 @@ impl<T> RawThunk<T> {
     }
 }
 
-/// Queryable incremental caching compute node.
+/// Result-caching [`RawThunk`].
 pub struct RawMemo<T> {
     thunk: RawThunk<T>,
     cached: RefCell<Option<T>>,
