@@ -23,7 +23,7 @@
 //!         let area = memo!(dcg, radius => {
 //!             println!("Calculating area...");
 //!             PI * radius * radius
-//!         }); // "Calculating area..."
+//!         });
 //!         Self {
 //!             radius,
 //!             area,
@@ -275,10 +275,10 @@ struct Node {
 }
 
 impl Node {
-    fn new(dcg: &Dcg, dirty: bool) -> Self {
+    fn new(dcg: &Dcg) -> Self {
         Self {
             graph: dcg.graph.clone(),
-            idx: dcg.graph.borrow_mut().add_node(dirty),
+            idx: dcg.graph.borrow_mut().add_node(true),
         }
     }
 
@@ -327,7 +327,7 @@ impl<T> RawVar<T> {
     fn new(dcg: &Dcg, value: T) -> Self {
         Self {
             value: RefCell::new(value),
-            node: Node::new(dcg, true),
+            node: Node::new(dcg),
         }
     }
 
@@ -427,7 +427,7 @@ impl<T: PartialEq> RawVar<T> {
 
 /// Queryable incremental compute node.
 pub struct RawThunk<T> {
-    f: Rc<dyn Fn() -> T + 'static>,
+    f: Box<dyn Fn() -> T + 'static>,
     node: Node,
 }
 
@@ -436,10 +436,10 @@ impl<T> RawThunk<T> {
     where
         F: Fn() -> T + 'static,
     {
-        let node = Node::new(dcg, true);
+        let node = Node::new(dcg);
         node.add_dependencies(deps);
         Self {
-            f: Rc::new(f),
+            f: Box::new(f),
             node,
         }
     }
@@ -466,7 +466,7 @@ impl<T> RawThunk<T> {
 /// Queryable incremental caching compute node.
 pub struct RawMemo<T> {
     thunk: RawThunk<T>,
-    cached: RefCell<T>,
+    cached: RefCell<Option<T>>,
 }
 
 impl<T> RawMemo<T> {
@@ -474,9 +474,10 @@ impl<T> RawMemo<T> {
     where
         F: Fn() -> T + 'static,
     {
-        let thunk = RawThunk::new(dcg, f, deps);
-        let cached = RefCell::new(thunk.read());
-        Self { thunk, cached }
+        Self {
+            thunk: RawThunk::new(dcg, f, deps),
+            cached: RefCell::new(None),
+        }
     }
 
     /// Retrieves the index of the corresponding DCG node.
@@ -551,9 +552,9 @@ impl<T: Clone> Incremental for RawMemo<T> {
 
     fn read(&self) -> Self::Output {
         if self.is_dirty() {
-            self.cached.replace(self.thunk.read());
+            self.cached.replace(Some(self.thunk.read()));
         }
-        self.cached.borrow().clone()
+        self.cached.borrow().clone().unwrap()
     }
 
     fn is_dirty(&self) -> bool {
@@ -746,7 +747,7 @@ mod tests {
         let m = memo!(dcg, 1);
 
         assert_eq!(dcg.graph.borrow().node_count(), 1);
-        assert!(m.is_clean());
+        assert!(m.is_dirty());
     }
 
     #[test]
@@ -781,6 +782,8 @@ mod tests {
         let m2 = memo!(dcg, m1);
         let m3 = memo!(dcg, a);
         let m4 = memo!(dcg, m3);
+        m2.read();
+        m4.read();
         dcg.graph.borrow_mut()[m3.idx()] = true;
 
         //   m1 --> m2
@@ -807,6 +810,8 @@ mod tests {
         let m2 = memo!(dcg, m1);
         let m3 = memo!(dcg, a);
         let m4 = memo!(dcg, m3);
+        m2.read();
+        m4.read();
         dcg.graph.borrow_mut()[m3.idx()] = true;
 
         //   m1 --> m2
@@ -858,8 +863,9 @@ mod tests {
         let m1 = memo!(dcg, a);
         let m2 = memo!(dcg, b);
         let m3 = memo!(dcg, (m1, m2) => m1 + m2);
+        // we ensure m1 contains Some(value) to avoid unwrapping a None
+        m1.read();
         a.write(2);
-        b.write(2);
         dcg.graph.borrow_mut()[m1.idx()] = false;
 
         //        (a) --> m1
@@ -893,14 +899,14 @@ mod tests {
             }
         });
 
-        // memo created
-        assert!(a_read.get());
+        // lazy memo created
+        assert!(!a_read.get());
 
         a_read.set(false);
 
-        // cached value fetched
+        // computes and caches value
         assert_eq!(safe_div.read(), Some(1));
-        assert!(!a_read.get());
+        assert!(a_read.get());
 
         // affected by change
         b.write(2);
