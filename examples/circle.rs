@@ -1,6 +1,6 @@
 use std::f64::consts::PI;
 
-use cachegrab::{memo, Dcg, Incremental, Memo, Var};
+use cachegrab::{incremental::Incremental, memo, Dcg, Memo, Var};
 
 type Point = (f64, f64);
 

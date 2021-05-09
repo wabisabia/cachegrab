@@ -7,7 +7,7 @@
 //! A [`Dcg`] can be used as a dependency-aware caching mechanism within structs:
 //!
 //! ```
-//! use cachegrab::{Dcg, Incremental, Var, Memo, memo};
+//! use cachegrab::{Dcg, incremental::Incremental, Var, Memo, memo};
 //! # use std::f64::consts::PI;
 //!
 //! struct Circle {
@@ -35,7 +35,7 @@
 //! All [`Dcg`] nodes' ([`Var`], [`Thunk`], [`Memo`]) values can be retrieved with [`read`](Incremental::read):
 //!
 //! ```
-//! # use cachegrab::{Dcg, Incremental, Var, Memo, memo};
+//! # use cachegrab::{Dcg, incremental::Incremental, Var, Memo, memo};
 //! # use std::f64::consts::PI;
 //! #
 //! # struct Circle {
@@ -66,7 +66,7 @@
 //! Use [`write`](RawVar::write) and [`modify`](RawVar::modify) to change [`Var`] values:
 //!
 //! ```
-//! # use cachegrab::{Dcg, Incremental, Var, Memo, memo};
+//! # use cachegrab::{Dcg, incremental::Incremental, Var, Memo, memo};
 //! # use std::f64::consts::PI;
 //! #
 //! # struct Circle {
@@ -160,7 +160,7 @@ impl Dcg {
     /// # Examples
     ///
     /// ```
-    /// use cachegrab::{Dcg, Incremental};
+    /// use cachegrab::{Dcg, incremental::Incremental};
     ///
     /// let dcg = Dcg::new();
     /// let a = dcg.var(1);
@@ -173,7 +173,7 @@ impl Dcg {
         Rc::new(RawVar::new(self, value))
     }
 
-    /// Creates a dirty [`Thunk`] storing `f` and registers `deps` as its dependencies in the [`Dcg`].
+    /// Creates a dirty [`Thunk`], adding incoming dependency edges from `params` and storing `f`.
     ///
     /// The [`Thunk`] starts dirty as it has never been read.
     ///
@@ -181,87 +181,90 @@ impl Dcg {
     ///
     /// # Warning ⚠
     ///
-    /// It is always preferable to use [`thunk!`] instead of this method; [`thunk!`] is strictly as
-    /// expressive and doesn't require you to jump through the following hoops:
+    /// It is preferable to use [`thunk!`] instead; [`thunk!`] is as expressive and doesn't require
+    /// the following steps:
     ///
-    /// - Clone any dependencies.
-    /// - `move` them into the closure.
-    /// - List their indices in `dep`.
+    /// - Clone and pass dependencies as `params`.
+    /// - `move` further clones into `f`.
+    ///
+    /// # Usage
+    ///
     /// ```
-    /// use cachegrab::{Dcg, Incremental, thunk};
+    /// use cachegrab::{Dcg, incremental::Incremental, thunk};
     ///
     /// let dcg = Dcg::new();
-    /// let numerator = dcg.var(1);
-    /// let denominator = dcg.var(1);
-    /// let numerator_inc = numerator.clone();
-    /// let denominator_inc = denominator.clone();
-    /// let safe_div = dcg.thunk(
+    /// let a = dcg.var(1);
+    /// let b = dcg.var(1);
+    /// let a_inc = a.clone();
+    /// let b_inc = b.clone();
+    /// let safe_div = dcg.thunk((a.clone(), b.clone()),
     ///     move || {
-    ///         let denominator = denominator_inc.read();
-    ///         if denominator == 0 {
+    ///         let b = b_inc.read();
+    ///         if b == 0 {
     ///             None
     ///         } else {
-    ///             Some(numerator_inc.read() / denominator)
+    ///             Some(a.read() / b)
     ///         }
-    ///     },
-    ///     &[numerator.idx(), denominator.idx()],
-    /// );
+    ///     });
     ///
     /// assert_eq!(safe_div.read(), Some(1));
-    /// denominator.write(0);
-    /// // numerator doesn't have to be- and isn't- executed!
+    /// b.write(0);
+    /// // a doesn't have to be- and isn't- read!
     /// assert_eq!(safe_div.read(), None);
     /// ```
-    pub fn thunk<T, F>(&self, f: F, deps: &[NodeIndex]) -> Thunk<T>
+    pub fn thunk<P, T, F>(&self, params: P, f: F) -> Thunk<T>
     where
+        P: Incremental,
         F: Fn() -> T + 'static,
     {
-        Rc::new(RawThunk::new(self, f, deps))
+        Rc::new(RawThunk::new(self, params, f))
     }
 
-    /// Creates a clean [`Memo`] storing `f`, cleans its transitive dependencies and registers `deps` as its dependencies in the [`Dcg`].
+    /// Creates a clean [`Memo`], adding incoming dependency edges from `params` and storing `f`.
     ///
-    /// The [`Memo`] and its dependencies will be cleaned because `f` is called to provide an initial cache value.
+    /// The [`Memo`] starts dirty as it has never been read.
     ///
     /// If non-caching behaviour is desired, use [`Dcg::thunk`] or [`thunk!`] instead.
     ///
     /// # Warning ⚠
     ///
-    /// It is always preferable to use [`memo!`] instead of this method; [`memo!`] is strictly as powerful and doesn't require you to jump through the following hoops:
+    /// It is preferable to use [`memo!`] instead; [`memo!`] is as powerful and doesn't require the
+    /// following steps:
     ///
-    /// - Clone any dependencies.
-    /// - `move` them into the closure.
-    /// - List their indices in `dep`.
+    /// - Clone and pass dependencies as `params`.
+    /// - `move` further clones into `f`.
+    ///
+    /// # Usage
+    ///
     /// ```
-    /// use cachegrab::{Dcg, Incremental};
+    /// use cachegrab::{Dcg, incremental::Incremental, thunk};
     ///
     /// let dcg = Dcg::new();
-    /// let numerator = dcg.var(1);
-    /// let denominator = dcg.var(1);
-    /// let numerator_inc = numerator.clone();
-    /// let denominator_inc = denominator.clone();
-    /// let safe_div = dcg.memo(
+    /// let a = dcg.var(1);
+    /// let b = dcg.var(1);
+    /// let a_inc = a.clone();
+    /// let b_inc = b.clone();
+    /// let safe_div = dcg.memo((a.clone(), b.clone()),
     ///     move || {
-    ///         let denominator = denominator_inc.read();
-    ///         if denominator == 0 {
+    ///         let b = b_inc.read();
+    ///         if b == 0 {
     ///             None
     ///         } else {
-    ///             Some(numerator_inc.read() / denominator)
+    ///             Some(a.read() / b)
     ///         }
-    ///     },
-    ///     &[numerator.idx(), denominator.idx()],
-    /// );
+    ///     });
     ///
     /// assert_eq!(safe_div.read(), Some(1));
-    /// denominator.write(0);
-    /// // numerator doesn't have to be- and isn't- executed!
+    /// b.write(0);
+    /// // a doesn't have to be- and isn't- read!
     /// assert_eq!(safe_div.read(), None);
     /// ```
-    pub fn memo<T, F>(&self, f: F, deps: &[NodeIndex]) -> Memo<T>
+    pub fn memo<P, T, F>(&self, params: P, f: F) -> Memo<T>
     where
+        P: Incremental,
         F: Fn() -> T + 'static,
     {
-        Rc::new(RawMemo::new(self, f, deps))
+        Rc::new(RawMemo::new(self, params, f))
     }
 }
 
@@ -271,7 +274,7 @@ impl fmt::Debug for Dcg {
     }
 }
 
-struct Node {
+pub struct Node {
     graph: Rc<RefCell<Graph>>,
     idx: NodeIndex,
 }
@@ -284,10 +287,13 @@ impl Node {
         }
     }
 
-    fn add_dependencies(&self, deps: &[NodeIndex]) {
+    fn add_dependencies<P>(&self, params: P)
+    where
+        P: Incremental,
+    {
         let mut graph = self.graph.borrow_mut();
-        for &dep in deps {
-            graph.add_edge(dep, self.idx, ());
+        for node in params.nodes() {
+            graph.add_edge(node.idx, self.idx, ());
         }
     }
 
@@ -340,7 +346,7 @@ impl<T> RawVar<T> {
     /// # Examples
     ///
     /// ```
-    /// use cachegrab::{Dcg, Incremental, thunk};
+    /// use cachegrab::{Dcg, incremental::Incremental, thunk};
     /// use petgraph::graph::NodeIndex;
     ///
     /// let dcg = Dcg::new();
@@ -364,7 +370,7 @@ impl<T: PartialEq> RawVar<T> {
     /// # Examples
     ///
     /// ```
-    /// use cachegrab::{Dcg, Incremental};
+    /// use cachegrab::{Dcg, incremental::Incremental};
     ///
     /// let dcg = Dcg::new();
     /// let a = dcg.var(1);
@@ -397,7 +403,7 @@ impl<T: PartialEq> RawVar<T> {
     /// # Examples
     ///
     /// ```
-    /// use cachegrab::{Dcg, Incremental};
+    /// use cachegrab::{Dcg, incremental::Incremental};
     ///
     /// let dcg = Dcg::new();
     /// let a = dcg.var(1);
@@ -434,12 +440,13 @@ pub struct RawThunk<T> {
 }
 
 impl<T> RawThunk<T> {
-    fn new<F>(dcg: &Dcg, f: F, deps: &[NodeIndex]) -> Self
+    fn new<P, F>(dcg: &Dcg, params: P, f: F) -> Self
     where
+        P: Incremental,
         F: Fn() -> T + 'static,
     {
         let node = Node::new(dcg);
-        node.add_dependencies(deps);
+        node.add_dependencies(params);
         Self {
             f: Box::new(f),
             node,
@@ -453,7 +460,7 @@ impl<T> RawThunk<T> {
     /// # Examples
     ///
     /// ```
-    /// use cachegrab::{Dcg, Incremental, thunk};
+    /// use cachegrab::{Dcg, incremental::Incremental, thunk};
     /// use petgraph::graph::NodeIndex;
     ///
     /// let dcg = Dcg::new();
@@ -472,12 +479,13 @@ pub struct RawMemo<T> {
 }
 
 impl<T> RawMemo<T> {
-    fn new<F>(dcg: &Dcg, f: F, deps: &[NodeIndex]) -> Self
+    fn new<P, F>(dcg: &Dcg, params: P, f: F) -> Self
     where
+        P: Incremental,
         F: Fn() -> T + 'static,
     {
         Self {
-            thunk: RawThunk::new(dcg, f, deps),
+            thunk: RawThunk::new(dcg, params, f),
             cached: RefCell::new(None),
         }
     }
@@ -499,6 +507,10 @@ impl<T: Clone> Incremental for RawVar<T> {
     fn is_dirty(&self) -> bool {
         self.node.is_dirty()
     }
+
+    fn nodes(&self) -> Vec<&Node> {
+        vec![&self.node]
+    }
 }
 
 impl<T> Incremental for RawThunk<T> {
@@ -511,6 +523,10 @@ impl<T> Incremental for RawThunk<T> {
 
     fn is_dirty(&self) -> bool {
         self.node.is_dirty()
+    }
+
+    fn nodes(&self) -> Vec<&Node> {
+        vec![&self.node]
     }
 }
 
@@ -526,6 +542,10 @@ impl<T: Clone> Incremental for RawMemo<T> {
 
     fn is_dirty(&self) -> bool {
         self.thunk.is_dirty()
+    }
+
+    fn nodes(&self) -> Vec<&Node> {
+        vec![&self.thunk.node]
     }
 }
 
@@ -548,7 +568,7 @@ impl<T: Clone> Incremental for RawMemo<T> {
 /// - An `expr` (ideally not referencing an [`Incremental`]).
 ///
 /// ```
-/// use cachegrab::{Dcg, Incremental, thunk};
+/// use cachegrab::{Dcg, incremental::Incremental, thunk};
 ///
 /// let dcg = Dcg::new();
 /// let numerator = dcg.var(1);
@@ -575,22 +595,22 @@ macro_rules! thunk {
         $crate::paste! {
             $(
                 let [<$read _clone>] = $read.clone();
+                let [<$read _param>] = $read.clone();
             )*
             $(
                 let $unread = $unread.clone();
+                let [<$unread _param>] = $unread.clone();
             )*
             $(
                 let [<$unread _idx>] = $unread.idx();
             )*
-        }
-        $dcg.thunk(move || {
-            $crate::paste! {
+            $dcg.thunk(($([<$read _param>],)* $([<$unread _param>]),*), move || {
                 $(
                     let $read = $crate::incremental::Incremental::read(&*[<$read _clone>]);
                 )*
-            }
-            $f
-        }, &[$($read.idx(),)* $crate::paste! { $([<$unread _idx>]),* }])
+                $f
+            })
+        }
     }};
     ($dcg:expr, $read:ident => $f:expr) => {
         thunk!($dcg, ($read) => $f)
@@ -624,7 +644,7 @@ macro_rules! thunk {
 /// # Examples
 ///
 /// ```
-/// use cachegrab::{Dcg, Incremental, memo};
+/// use cachegrab::{Dcg, incremental::Incremental, memo};
 ///
 /// let dcg = Dcg::new();
 /// let numerator = dcg.var(1);
@@ -651,22 +671,19 @@ macro_rules! memo {
         $crate::paste! {
             $(
                 let [<$read _inc>] = $read.clone();
+                let [<$read _param>] = $read.clone();
             )*
             $(
                 let $unread = $unread.clone();
+                let [<$unread _param>] = $unread.clone();
             )*
-            $(
-                let [<$unread _idx>] = $unread.idx();
-            )*
-        }
-        $dcg.memo(move || {
-            $crate::paste! {
+            $dcg.memo(($([<$read _param>],)* $([<$unread _param>]),*), move || {
                 $(
                     let $read = $crate::incremental::Incremental::read(&*[<$read _inc>]);
                 )*
-            }
-            $f
-        }, &[$($read.idx(),)* $crate::paste! { $([<$unread _idx>]),* }])
+                $f
+            })
+        }
     }};
     ($dcg:expr, $read:ident => $f:expr) => {
         memo!($dcg, ($read) => $f)
@@ -780,6 +797,7 @@ mod tests {
         m2.read();
         m4.read();
         dcg.graph.borrow_mut()[m3.idx()] = true;
+        println!("{:?}", dcg);
 
         //   m1 --> m2
         //  /

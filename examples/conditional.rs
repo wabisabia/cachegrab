@@ -1,4 +1,4 @@
-use cachegrab::{thunk, Dcg, Incremental};
+use cachegrab::{incremental::Incremental, thunk, Dcg};
 
 fn main() {
     let dcg = Dcg::new();
