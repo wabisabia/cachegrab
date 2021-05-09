@@ -170,7 +170,10 @@ impl Dcg {
     /// assert!(a.is_clean());
     /// ```
     pub fn var<T>(&self, value: T) -> Var<T> {
-        Rc::new(RawVar::new(self, value))
+        Rc::new(RawVar {
+            value: RefCell::new(value),
+            node: Node::new(self),
+        })
     }
 
     /// Creates a dirty [`Thunk`], adding incoming dependency edges from `params` and storing `f`.
@@ -264,7 +267,10 @@ impl Dcg {
         P: Incremental,
         F: Fn() -> T + 'static,
     {
-        Rc::new(RawMemo::new(self, params, f))
+        Rc::new(RawMemo {
+            thunk: RawThunk::new(self, params, f),
+            cached: RefCell::new(None),
+        })
     }
 }
 
@@ -330,15 +336,6 @@ impl Node {
 pub struct RawVar<T> {
     value: RefCell<T>,
     node: Node,
-}
-
-impl<T> RawVar<T> {
-    fn new(dcg: &Dcg, value: T) -> Self {
-        Self {
-            value: RefCell::new(value),
-            node: Node::new(dcg),
-        }
-    }
 }
 
 impl<T: PartialEq> RawVar<T> {
@@ -439,19 +436,6 @@ impl<T> RawThunk<T> {
 pub struct RawMemo<T> {
     thunk: RawThunk<T>,
     cached: RefCell<Option<T>>,
-}
-
-impl<T> RawMemo<T> {
-    fn new<P, F>(dcg: &Dcg, params: P, f: F) -> Self
-    where
-        P: Incremental,
-        F: Fn() -> T + 'static,
-    {
-        Self {
-            thunk: RawThunk::new(dcg, params, f),
-            cached: RefCell::new(None),
-        }
-    }
 }
 
 impl<T: Clone> Incremental for RawVar<T> {

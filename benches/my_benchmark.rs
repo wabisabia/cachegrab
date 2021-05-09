@@ -1,42 +1,42 @@
-use cachegrab::{memo, thunk, Dcg, Incremental};
+use cachegrab::{incremental::Incremental, memo, thunk, Dcg};
 use criterion::{black_box, criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
 use rand::{prelude::SliceRandom, rngs::SmallRng, SeedableRng};
 
 fn internals(c: &mut Criterion) {
     let dcg = Dcg::new();
-    let cell = dcg.var(1);
-    let memo = memo!(dcg, cell);
-    let thunk = thunk!(dcg, cell);
+    let var = dcg.var(1);
+    let memo = memo!(dcg, var);
+    let thunk = thunk!(dcg, var);
 
     let mut internals = c.benchmark_group("Internals");
 
-    internals.bench_function("read cell", |b| b.iter(|| cell.read()));
-    internals.bench_function("write cell same", |b| b.iter(|| cell.write(1)));
-    internals.bench_function("write cell changed", |b| {
+    internals.bench_function("read var", |b| b.iter(|| var.read()));
+    internals.bench_function("write var same", |b| b.iter(|| var.write(1)));
+    internals.bench_function("write var changed", |b| {
         b.iter_batched(
             || {
-                cell.write(1);
+                var.write(1);
             },
-            |_| cell.write(2),
+            |_| var.write(2),
             BatchSize::SmallInput,
         )
     });
-    internals.bench_function("modify cell same", |b| b.iter(|| cell.modify(|x| *x)));
-    internals.bench_function("modify cell changed", |b| {
+    internals.bench_function("modify var same", |b| b.iter(|| var.modify(|x| *x)));
+    internals.bench_function("modify var changed", |b| {
         b.iter_batched(
             || {
-                cell.write(1);
+                var.write(1);
             },
-            |_| cell.modify(|x| *x + 1),
+            |_| var.modify(|x| *x + 1),
             BatchSize::SmallInput,
         )
     });
-    internals.bench_function("modify cell vs read-write", |b| {
+    internals.bench_function("modify var vs read-write", |b| {
         b.iter_batched(
             || {
-                cell.write(1);
+                var.write(1);
             },
-            |_| cell.write(cell.read() + 1),
+            |_| var.write(var.read() + 1),
             BatchSize::SmallInput,
         )
     });
@@ -47,7 +47,7 @@ fn internals(c: &mut Criterion) {
     internals.bench_function("read memo changed", |b| {
         b.iter_batched(
             || {
-                cell.write(if cell.read() == 1 { 2 } else { 1 });
+                var.write(if var.read() == 1 { 2 } else { 1 });
             },
             |_| memo.read(),
             BatchSize::SmallInput,
