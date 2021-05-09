@@ -1,3 +1,5 @@
+//! Making types [`Incremental`].
+
 use std::rc::Rc;
 
 use crate::Node;
@@ -36,7 +38,7 @@ pub trait Incremental {
         !self.is_dirty()
     }
 
-    /// Returns a vector containing references to the [`Incremental`]'s [`Dcg`] [`Node`]s.
+    /// Returns a vector containing references to the [`Incremental`]'s DCG [`Node`]s.
     ///
     /// The default implementation returns an empty [`Vec`]
     fn nodes(&self) -> Vec<&Node>;

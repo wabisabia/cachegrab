@@ -274,6 +274,7 @@ impl fmt::Debug for Dcg {
     }
 }
 
+/// A handle for a node in a [`Dcg`].
 pub struct Node {
     graph: Rc<RefCell<Graph>>,
     idx: NodeIndex,
@@ -337,26 +338,6 @@ impl<T> RawVar<T> {
             value: RefCell::new(value),
             node: Node::new(dcg),
         }
-    }
-
-    /// Retrieves the index of the corresponding DCG node.
-    ///
-    /// This used to indicate a dependency when creating a [`Thunk`] or [`Memo`]
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use cachegrab::{Dcg, incremental::Incremental, thunk};
-    /// use petgraph::graph::NodeIndex;
-    ///
-    /// let dcg = Dcg::new();
-    /// let a = dcg.var(1);
-    /// let thunk = thunk!(dcg, a);
-    ///
-    /// assert_eq!(a.idx(), NodeIndex::new(0));
-    /// ```
-    pub fn idx(&self) -> NodeIndex {
-        self.node.idx
     }
 }
 
@@ -452,24 +433,6 @@ impl<T> RawThunk<T> {
             node,
         }
     }
-
-    /// Retrieves the index of the corresponding DCG node.
-    ///
-    /// This used to indicate a dependency when creating a [`Thunk`] or [`Memo`]
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use cachegrab::{Dcg, incremental::Incremental, thunk};
-    /// use petgraph::graph::NodeIndex;
-    ///
-    /// let dcg = Dcg::new();
-    /// let thunk = thunk!(dcg, 1);
-    ///
-    /// assert_eq!(thunk.idx(), NodeIndex::new(0));
-    pub fn idx(&self) -> NodeIndex {
-        self.node.idx
-    }
 }
 
 /// Result-caching [`RawThunk`].
@@ -489,18 +452,13 @@ impl<T> RawMemo<T> {
             cached: RefCell::new(None),
         }
     }
-
-    /// Retrieves the index of the corresponding DCG node.
-    pub fn idx(&self) -> NodeIndex {
-        self.thunk.idx()
-    }
 }
 
 impl<T: Clone> Incremental for RawVar<T> {
     type Output = T;
 
     fn read(&self) -> Self::Output {
-        self.node.graph.borrow_mut()[self.idx()] = false;
+        self.node.graph.borrow_mut()[self.node.idx] = false;
         self.value.borrow().clone()
     }
 
@@ -517,7 +475,7 @@ impl<T> Incremental for RawThunk<T> {
     type Output = T;
 
     fn read(&self) -> Self::Output {
-        self.node.graph.borrow_mut()[self.idx()] = false;
+        self.node.graph.borrow_mut()[self.node.idx] = false;
         (self.f)()
     }
 
@@ -600,9 +558,6 @@ macro_rules! thunk {
             $(
                 let $unread = $unread.clone();
                 let [<$unread _param>] = $unread.clone();
-            )*
-            $(
-                let [<$unread _idx>] = $unread.idx();
             )*
             $dcg.thunk(($([<$read _param>],)* $([<$unread _param>]),*), move || {
                 $(
@@ -768,16 +723,13 @@ mod tests {
         let m4 = memo!(dcg, m3);
         m2.read();
         m4.read();
-        dcg.graph.borrow_mut()[m3.idx()] = true;
+        dcg.graph.borrow_mut()[m3.thunk.node.idx] = true;
 
-        //   m1 --> m2
-        //  /
-        // a --> (m3) --> m4
+        //   m1 --> m2           (m1) --> (m2)
+        //  /               -->  /
+        // a --> (m3) --> m4   (a) --> (m3) --> m4
         assert_eq!(a.write(2), 1);
 
-        //   (m1) --> (m2)
-        //   /
-        // (a) --> (m3) --> m4
         assert!(a.is_dirty());
         assert!(m1.is_dirty());
         assert!(m2.is_dirty());
@@ -796,17 +748,14 @@ mod tests {
         let m4 = memo!(dcg, m3);
         m2.read();
         m4.read();
-        dcg.graph.borrow_mut()[m3.idx()] = true;
+        dcg.graph.borrow_mut()[m3.thunk.node.idx] = true;
         println!("{:?}", dcg);
 
-        //   m1 --> m2
-        //  /
-        // a --> (m3) --> m4
+        //   m1 --> m2           (m1) --> (m2)
+        //  /               --> /
+        // a --> (m3) --> m4   (a) --> (m3) --> m4
         assert_eq!(a.modify(|x| *x + 1), 1);
 
-        //   (m1) --> (m2)
-        //  /
-        // (a) --> (m3) --> m4
         assert!(a.is_dirty());
         assert!(m1.is_dirty());
         assert!(m2.is_dirty());
@@ -823,16 +772,13 @@ mod tests {
         let t1 = thunk!(dcg, a);
         let t2 = thunk!(dcg, b);
         let t3 = thunk!(dcg, (t1, t2) => t1 + t2);
-        dcg.graph.borrow_mut()[t1.idx()] = false;
+        dcg.graph.borrow_mut()[t1.node.idx] = false;
 
-        //        (a) --> t1
-        //                   \
-        // (b) --> (t2) --> (t3)
+        //        (a) --> t1            a --> t1
+        //                   \  -->             \
+        // (b) --> (t2) --> (t3)    b --> t2 --> t3
         t3.read();
 
-        //     a --> t1
-        //              \
-        // b --> t2 --> t3
         assert!(a.is_clean());
         assert!(b.is_clean());
         assert!(t1.is_clean());
@@ -851,16 +797,13 @@ mod tests {
         // we ensure m1 contains Some(value) to avoid unwrapping a None
         m1.read();
         a.write(2);
-        dcg.graph.borrow_mut()[m1.idx()] = false;
+        dcg.graph.borrow_mut()[m1.thunk.node.idx] = false;
 
-        //        (a) --> m1
-        //                   \
-        // (b) --> (m2) --> (m3)
+        //        (a) --> m1           (a) --> m1
+        //                   \  -->             \
+        // (b) --> (m2) --> (m3)   b --> m2 --> m3
         m3.read();
 
-        //     (a) --> m1
-        //              \
-        // b --> m2 --> m3
         assert!(a.is_dirty());
         assert!(b.is_clean());
         assert!(m1.is_clean());
