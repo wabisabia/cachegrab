@@ -204,7 +204,9 @@ impl Dcg {
     ///
     /// The [`Thunk`] starts dirty as it has never been read.
     ///
-    /// If caching behaviour is desired, use [`Dcg::buffer`] or [`buffer!`] instead.
+    /// If buffering behaviour is desired, use [`buffer`](Dcg::buffer) or [`buffer!`] instead.
+    ///
+    /// If full caching behaviour is desired, use [`memo`](Dcg::memo) or [`memo!`] instead.
     ///
     /// # Warning ⚠
     ///
@@ -251,9 +253,9 @@ impl Dcg {
     ///
     /// The [`Memo`] starts dirty as it has never been read.
     ///
-    /// If non-caching behaviour is desired, use [`Dcg::thunk`] or [`thunk!`] instead.
+    /// If non-caching behaviour is desired, use [`thunk`](Dcg::thunk) or [`thunk!`] instead.
     ///
-    /// If buffering behaviour is desired, use [`Dcg::buffer`] or [`buffer!`] instead.
+    /// If buffering behaviour is desired, use [`buffer`](Dcg::buffer) or [`buffer!`] instead.
     ///
     /// # Warning ⚠
     ///
@@ -305,7 +307,9 @@ impl Dcg {
     ///
     /// The [`Buffer`] starts dirty as it has never been read.
     ///
-    /// If non-caching behaviour is desired, use [`Dcg::thunk`] or [`thunk!`] instead.
+    /// If non-caching behaviour is desired, use [`thunk`](Dcg::thunk) or [`thunk!`] instead.
+    ///
+    /// If full caching behaviour is desired, use [`memo`](Dcg::memo) or [`memo!`] instead.
     ///
     /// # Warning ⚠
     ///
@@ -524,7 +528,7 @@ where
     cache: RefCell<HashMap<A, T>>,
 }
 
-/// [`RawThunk`] that caches only its previous value.
+/// [`RawThunk`] that buffers its previous value.
 pub struct RawBuffer<T> {
     thunk: RawThunk<T>,
     buffered: RefCell<Option<T>>,
