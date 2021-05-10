@@ -1,6 +1,6 @@
 use std::f64::consts::PI;
 
-use cachegrab::{incremental::Incremental, memo, Dcg, Memo, Var};
+use cachegrab::{buffer, incremental::Incremental, Buffer, Dcg, Var};
 
 type Point = (f64, f64);
 
@@ -8,9 +8,9 @@ struct Circle {
     dcg: Dcg,
     pos: Var<Point>,
     radius: Var<f64>,
-    circumference: Memo<f64>,
-    area: Memo<f64>,
-    bounding_box: Memo<(Point, f64, f64)>,
+    circumference: Buffer<f64>, // cheap computation
+    area: Buffer<f64>,
+    bounding_box: Buffer<(Point, f64, f64)>, // expensive computation
 }
 
 impl Circle {
@@ -18,9 +18,9 @@ impl Circle {
         let dcg = Dcg::new();
         let radius = dcg.var(radius);
         let pos = dcg.var((0., 0.));
-        let circumference = memo!(dcg, radius => 2. * PI * radius);
-        let area = memo!(dcg, radius => PI * radius * radius);
-        let bounding_box = memo!(dcg, (pos, radius) => {
+        let circumference = buffer!(dcg, radius => 2. * PI * radius);
+        let area = buffer!(dcg, radius => PI * radius * radius);
+        let bounding_box = buffer!(dcg, (pos, radius) => {
             let (x, y) = pos;
             let half_radius = radius / 2.;
             ((x - half_radius, y - half_radius), radius, radius)

@@ -39,8 +39,10 @@ pub trait Incremental {
     /// required.
     fn read(&self) -> Self::Output {
         let value = self.latest();
-        for node in self.nodes() {
-            node.clean();
+        if self.is_dirty() {
+            for node in self.nodes() {
+                node.clean();
+            }
         }
         value
     }

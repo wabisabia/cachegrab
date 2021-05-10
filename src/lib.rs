@@ -7,106 +7,127 @@
 //! A [`Dcg`] can be used as a dependency-aware caching mechanism within structs:
 //!
 //! ```
-//! use cachegrab::{Dcg, incremental::Incremental, Var, Memo, memo};
+//! use cachegrab::{Dcg, incremental::Incremental, Var, thunk, Thunk, buffer, Buffer};
 //! # use std::f64::consts::PI;
 //!
 //! struct Circle {
-//!     radius: Var<f64>, // `Var`s hold data
-//!     area: Memo<f64>, // `Memo`s store functions and cache their results
+//!     radius: Var<f64>,   // `Var` stores data
+//!     circum: Thunk<f64>, // `Thunk` returns computation results
+//!     area: Buffer<f64>,  // `Buffer` stores `Thunk` and buffers its latest result
 //! }
 //!
 //! impl Circle {
 //!     fn from_radius(radius: f64) -> Self {
 //!         let dcg = Dcg::new();
 //!         let radius = dcg.var(radius);
-//!         // `Memo`s cache most recent value
-//!         let area = memo!(dcg, radius => {
+//!         let circum = thunk!(dcg, radius => {
+//!             println!("Calculating circumference...");
+//!             2. * PI * radius
+//!         });
+//!         let area = buffer!(dcg, radius => {
 //!             println!("Calculating area...");
 //!             PI * radius * radius
 //!         });
 //!         Self {
 //!             radius,
+//!             circum,
 //!             area,
 //!         }
 //!     }
 //! }
 //! ```
 //!
-//! All [`Dcg`] nodes' ([`Var`], [`Thunk`], [`Memo`]) values can be retrieved with [`read`](Incremental::read):
+//! All [`Dcg`] nodes' ([`Var`], [`Thunk`], [`Memo`], [`Buffer`]) values can be retrieved with [`read`](Incremental::read):
 //!
 //! ```
-//! # use cachegrab::{Dcg, incremental::Incremental, Var, Memo, memo};
+//! # use cachegrab::{Dcg, incremental::Incremental, Var, thunk, Thunk, buffer, Buffer};
 //! # use std::f64::consts::PI;
 //! #
 //! # struct Circle {
-//! #     radius: Var<f64>, // `Var`s hold data
-//! #     area: Memo<f64>, // `Memo`s store functions and caches their results
+//! #     radius: Var<f64>,   // `Var` stores data
+//! #     circum: Thunk<f64>, // `Thunk` returns computation results
+//! #     area: Buffer<f64>,  // `Buffer` stores `Thunk` and buffers its latest result
 //! # }
 //! #
 //! # impl Circle {
 //! #     fn from_radius(radius: f64) -> Self {
 //! #         let dcg = Dcg::new();
 //! #         let radius = dcg.var(radius);
-//! #         let area = memo!(dcg, (radius) => {
+//! #         let circum = thunk!(dcg, radius => {
+//! #             println!("Calculating circumference...");
+//! #             2. * PI * radius
+//! #         });
+//! #         let area = buffer!(dcg, radius => {
 //! #             println!("Calculating area...");
 //! #             PI * radius * radius
 //! #         });
 //! #         Self {
 //! #             radius,
+//! #             circum,
 //! #             area,
 //! #         }
 //! #     }
 //! # }
 //! let circle = Circle::from_radius(1.);
 //! assert_eq!(circle.radius.read(), 1.);
-//! assert_eq!(circle.area.read(), PI); // "Calculating area..."
-//! assert_eq!(circle.area.read(), PI); // Nothing prints: we just used a cached value!
+//! assert_eq!(circle.circum.read(), 2. * PI);  // "Calculating area..."
+//! circle.circum.read();                       // "Calculating area..."
+//! assert_eq!(circle.area.read(), PI);         // "Calculating area..."
+//! circle.area.read();                         // "" a buffered value was used!
 //! ```
 //!
 //! Use [`write`](RawVar::write) and [`modify`](RawVar::modify) to change [`Var`] values:
 //!
 //! ```
-//! # use cachegrab::{Dcg, incremental::Incremental, Var, Memo, memo};
+//! # use cachegrab::{Dcg, incremental::Incremental, Var, thunk, Thunk, buffer, Buffer};
 //! # use std::f64::consts::PI;
 //! #
 //! # struct Circle {
-//! #     radius: Var<f64>, // `Var`s hold data
-//! #     area: Memo<f64>, // `Memo`s store functions and caches their results
+//! #     radius: Var<f64>,   // `Var` stores data
+//! #     circum: Thunk<f64>, // `Thunk` returns computation results
+//! #     area: Buffer<f64>,  // `Buffer` stores `Thunk` and buffers its latest result
 //! # }
 //! #
 //! # impl Circle {
 //! #     fn from_radius(radius: f64) -> Self {
 //! #         let dcg = Dcg::new();
 //! #         let radius = dcg.var(radius);
-//! #         let area = memo!(dcg, radius => {
+//! #         let circum = thunk!(dcg, radius => {
+//! #             println!("Calculating circumference...");
+//! #             2. * PI * radius
+//! #         });
+//! #         let area = buffer!(dcg, radius => {
 //! #             println!("Calculating area...");
 //! #             PI * radius * radius
 //! #         });
 //! #         Self {
 //! #             radius,
+//! #             circum,
 //! #             area,
 //! #         }
+//! #     
 //! #     }
 //! # }
 //! # let circle = Circle::from_radius(1.);
 //! // Let's change `radius`...
 //! circle.radius.write(2.);
-//! assert_eq!(circle.radius.modify(|r| *r + 1.), 2.);  // "Change" methods return the last value
-//! assert_eq!(circle.radius.read(), 3.);               // New radius is indeed 3
+//! assert_eq!(circle.radius.modify(|r| *r + 1.), 2.);  // "Changes" return the last value
+//! assert_eq!(circle.radius.read(), 3.);
 //!
-//! // We changed `radius`, so `area` is re-computed and cached
-//! assert_eq!(circle.area.read(), 9. * PI);            // "Calculating area..."
+//! // We changed `radius`, so `area` is re-computed and buffered
+//! assert_eq!(circle.area.read(), 9. * PI);    // "Calculating area..."
+//! circle.area.read();                         // ""
 //! ```
 //!
 //! [`Dcg`] nodes can be shared between computations...
 //!
 //! ```
-//! # use cachegrab::{Dcg, memo};
+//! # use cachegrab::{Dcg, buffer};
 //! # use std::f64::consts::PI;
 //! # let dcg = Dcg::new();
 //! # let radius = dcg.var(1.);
-//! let area = memo!(dcg, radius => PI * radius * radius);        // radius used here
-//! let circumference = memo!(dcg, radius => 2. * PI * radius);   // ... and here
+//! let area = buffer!(dcg, radius => PI * radius * radius);        // radius used here
+//! let circumference = buffer!(dcg, radius => 2. * PI * radius);   // ... and here
 //! ```
 
 use petgraph::{
@@ -117,7 +138,7 @@ use petgraph::{
 
 #[doc(hidden)]
 pub use paste::paste;
-use std::{cell::RefCell, fmt, rc::Rc};
+use std::{cell::RefCell, collections::HashMap, fmt, hash::Hash, rc::Rc};
 pub mod incremental;
 use incremental::Incremental;
 
@@ -136,7 +157,10 @@ pub type Var<T> = Rc<RawVar<T>>;
 pub type Thunk<T> = Rc<RawThunk<T>>;
 
 /// Refines the concept of a shared [`RawMemo`].
-pub type Memo<T> = Rc<RawMemo<T>>;
+pub type Memo<A, T> = Rc<RawMemo<A, T>>;
+
+/// Refines the concept of a shared [`RawBuffer`].
+pub type Buffer<T> = Rc<RawBuffer<T>>;
 
 impl Dcg {
     /// Creates a new, empty DCG.
@@ -180,7 +204,7 @@ impl Dcg {
     ///
     /// The [`Thunk`] starts dirty as it has never been read.
     ///
-    /// If caching behaviour is desired, use [`Dcg::memo`] or [`memo!`] instead.
+    /// If caching behaviour is desired, use [`Dcg::buffer`] or [`buffer!`] instead.
     ///
     /// # Warning ⚠
     ///
@@ -220,14 +244,16 @@ impl Dcg {
         P: Incremental,
         F: Fn() -> T + 'static,
     {
-        Rc::new(RawThunk::new(self, params, f))
+        Rc::new(RawThunk::new(self, &params, f))
     }
 
-    /// Creates a clean [`Memo`], adding incoming dependency edges from `params` and storing `f`.
+    /// Creates a dirty [`Memo`], adding incoming dependency edges from `params` and storing `f`.
     ///
     /// The [`Memo`] starts dirty as it has never been read.
     ///
     /// If non-caching behaviour is desired, use [`Dcg::thunk`] or [`thunk!`] instead.
+    ///
+    /// If buffering behaviour is desired, use [`Dcg::buffer`] or [`buffer!`] instead.
     ///
     /// # Warning ⚠
     ///
@@ -247,7 +273,7 @@ impl Dcg {
     /// let b = dcg.var(1);
     /// let a_inc = a.clone();
     /// let b_inc = b.clone();
-    /// let safe_div = dcg.memo((a.clone(), b.clone()),
+    /// let safe_div = dcg.buffer((a.clone(), b.clone()),
     ///     move || {
     ///         let b = b_inc.read();
     ///         if b == 0 {
@@ -262,13 +288,65 @@ impl Dcg {
     /// // a doesn't have to be- and isn't- read!
     /// assert_eq!(safe_div.read(), None);
     /// ```
-    pub fn memo<P, T, F>(&self, params: P, f: F) -> Memo<T>
+    pub fn memo<P, F, A, T>(&self, params: P, f: F) -> Memo<A, T>
+    where
+        P: Incremental<Output = A> + 'static,
+        A: Eq + Hash,
+        F: Fn() -> T + 'static,
+    {
+        Rc::new(RawMemo {
+            thunk: RawThunk::new(self, &params, f),
+            params: Box::new(params),
+            cache: RefCell::default(),
+        })
+    }
+
+    /// Creates a dirty [`Buffer`], adding incoming dependency edges from `params` and storing `f`.
+    ///
+    /// The [`Buffer`] starts dirty as it has never been read.
+    ///
+    /// If non-caching behaviour is desired, use [`Dcg::thunk`] or [`thunk!`] instead.
+    ///
+    /// # Warning ⚠
+    ///
+    /// It is preferable to use [`buffer!`] instead; [`buffer!`] is as powerful and doesn't require the
+    /// following steps:
+    ///
+    /// - Clone and pass dependencies as `params`.
+    /// - `move` further clones into `f`.
+    ///
+    /// # Usage
+    ///
+    /// ```
+    /// use cachegrab::{Dcg, incremental::Incremental, thunk};
+    ///
+    /// let dcg = Dcg::new();
+    /// let a = dcg.var(1);
+    /// let b = dcg.var(1);
+    /// let a_inc = a.clone();
+    /// let b_inc = b.clone();
+    /// let safe_div = dcg.buffer((a.clone(), b.clone()),
+    ///     move || {
+    ///         let b = b_inc.read();
+    ///         if b == 0 {
+    ///             None
+    ///         } else {
+    ///             Some(a.read() / b)
+    ///         }
+    ///     });
+    ///
+    /// assert_eq!(safe_div.read(), Some(1));
+    /// b.write(0);
+    /// // a doesn't have to be- and isn't- read!
+    /// assert_eq!(safe_div.read(), None);
+    /// ```
+    pub fn buffer<P, T, F>(&self, params: P, f: F) -> Buffer<T>
     where
         P: Incremental,
         F: Fn() -> T + 'static,
     {
-        Rc::new(RawMemo {
-            thunk: RawThunk::new(self, params, f),
+        Rc::new(RawBuffer {
+            thunk: RawThunk::new(self, &params, f),
             cached: RefCell::new(None),
         })
     }
@@ -294,7 +372,7 @@ impl Node {
         }
     }
 
-    fn add_dependencies<P>(&self, params: P)
+    fn add_dependencies<P>(&self, params: &P)
     where
         P: Incremental,
     {
@@ -422,7 +500,7 @@ pub struct RawThunk<T> {
 }
 
 impl<T> RawThunk<T> {
-    fn new<P, F>(dcg: &Dcg, params: P, f: F) -> Self
+    fn new<P, F>(dcg: &Dcg, params: &P, f: F) -> Self
     where
         P: Incremental,
         F: Fn() -> T + 'static,
@@ -436,8 +514,18 @@ impl<T> RawThunk<T> {
     }
 }
 
-/// Result-caching [`RawThunk`].
-pub struct RawMemo<T> {
+/// [`RawThunk`] that caches all its previous values.
+pub struct RawMemo<A, T>
+where
+    A: Eq + Hash,
+{
+    thunk: RawThunk<T>,
+    params: Box<dyn Incremental<Output = A>>,
+    cache: RefCell<HashMap<A, T>>,
+}
+
+/// [`RawThunk`] that caches only its previous value.
+pub struct RawBuffer<T> {
     thunk: RawThunk<T>,
     cached: RefCell<Option<T>>,
 }
@@ -474,7 +562,36 @@ impl<T> Incremental for RawThunk<T> {
     }
 }
 
-impl<T: Clone> Incremental for RawMemo<T> {
+impl<A, T> Incremental for RawMemo<A, T>
+where
+    A: Eq + Hash,
+    T: Clone,
+{
+    type Output = T;
+
+    fn latest(&self) -> Self::Output {
+        let args = self.params.read();
+        let mut cache = self.cache.borrow_mut();
+        match cache.get(&args) {
+            Some(result) => result.clone(),
+            None => {
+                let missed = self.thunk.read();
+                cache.insert(args, missed.clone());
+                missed
+            }
+        }
+    }
+
+    fn is_dirty(&self) -> bool {
+        self.thunk.is_dirty()
+    }
+
+    fn nodes(&self) -> Vec<&Node> {
+        self.thunk.nodes()
+    }
+}
+
+impl<T: Clone> Incremental for RawBuffer<T> {
     type Output = T;
 
     fn latest(&self) -> Self::Output {
@@ -621,6 +738,71 @@ macro_rules! memo {
     };
 }
 
+/// Ergonomic [`Buffer`] creation.
+///
+/// The first argument is the [`Dcg`] in which the [`Buffer`] will be created.
+///
+/// The second argument specifies how the [`Buffer`] will generate values.
+/// It can be:
+///
+/// - An [`Incremental`]'s `ident`; the [`Incremental`] is simply (`read`)[Incremental::read].
+/// - Of the form `params => expr` where
+///     - `params` can be
+///         - `(reads; unreads)` where `read` and `unread` are `,`-separated lists of [`Incremental`] `ident`s.
+///         - `read` - an [`Incremental`]'s `ident`.
+///         - `(reads)` where `reads` is a `,`-separated list of [`Incremental`] `ident`s.
+///     - `expr` is an expression that treats:
+///         - `read` params as if they were (`read`)[Incremental::read].
+///         - `unread` params as normal.
+/// - An `expr` (ideally not referencing an [`Incremental`]).
+///
+/// # Examples
+///
+/// ```
+/// use cachegrab::{Dcg, incremental::Incremental, buffer};
+///
+/// let dcg = Dcg::new();
+/// let numerator = dcg.var(1);
+/// let denominator = dcg.var(1);
+/// let safe_div = buffer!(dcg, (denominator; numerator) => {
+///     if denominator == 0 {
+///         None
+///     } else {
+///         Some(numerator.read() / denominator)
+///     }
+/// });
+///
+/// assert_eq!(safe_div.read(), Some(1));
+/// denominator.write(0);
+/// // numerator doesn't have to be- and isn't- executed!
+/// assert_eq!(safe_div.read(), None);
+/// ```
+#[macro_export]
+macro_rules! buffer {
+    ($dcg:ident, ($($read:ident),*; $($unread:ident),*) => $f:expr) => {{
+        $crate::paste! {
+            $(let [<$read _clone>] = std::rc::Rc::clone(&$read);)*
+            $(let $unread = std::rc::Rc::clone(&$unread);)*
+            $dcg.buffer(($(std::rc::Rc::clone(&$read),)* $(std::rc::Rc::clone(&$unread)),*), move || {
+                $(let $read = $crate::incremental::Incremental::read(&*[<$read _clone>]);)*
+                $f
+            })
+        }
+    }};
+    ($dcg:ident, $read:ident) => {
+        buffer!($dcg, ($read) => $read)
+    };
+    ($dcg:ident, $read:ident => $f:expr) => {
+        buffer!($dcg, ($read) => $f)
+    };
+    ($dcg:ident, ($($read:ident),*) => $f:expr) => {
+        buffer!($dcg, ($($read),*;) => $f)
+    };
+    ($dcg:ident, $f:expr) => {
+        buffer!($dcg, (;) => $f)
+    };
+}
+
 #[cfg(test)]
 mod tests {
     use std::cell;
@@ -660,6 +842,16 @@ mod tests {
     }
 
     #[test]
+    fn create_buffer() {
+        let dcg = Dcg::new();
+
+        let b = buffer!(dcg, 1);
+
+        assert_eq!(dcg.graph.borrow().node_count(), 1);
+        assert!(b.is_dirty());
+    }
+
+    #[test]
     fn var_read() {
         let dcg = Dcg::new();
         let a = dcg.var(1);
@@ -684,27 +876,35 @@ mod tests {
     }
 
     #[test]
+    fn buffer_read() {
+        let dcg = Dcg::new();
+        let b = buffer!(dcg, 1);
+
+        assert_eq!(b.read(), 1);
+    }
+
+    #[test]
     fn var_write() {
         let dcg = Dcg::new();
         let a = dcg.var(1);
-        let m1 = memo!(dcg, a);
-        let m2 = memo!(dcg, m1);
-        let m3 = memo!(dcg, a);
-        let m4 = memo!(dcg, m3);
-        m2.read();
-        m4.read();
-        dcg.graph.borrow_mut()[m3.thunk.node.idx] = true;
+        let b1 = buffer!(dcg, a);
+        let b2 = buffer!(dcg, b1);
+        let b3 = buffer!(dcg, a);
+        let b4 = buffer!(dcg, b3);
+        b2.read();
+        b4.read();
+        dcg.graph.borrow_mut()[b3.thunk.node.idx] = true;
 
-        //   m1 --> m2           (m1) --> (m2)
+        //   b1 --> b2           (b1) --> (b2)
         //  /               -->  /
-        // a --> (m3) --> m4   (a) --> (m3) --> m4
+        // a --> (b3) --> b4   (a) --> (b3) --> b4
         assert_eq!(a.write(2), 1);
 
         assert!(a.is_dirty());
-        assert!(m1.is_dirty());
-        assert!(m2.is_dirty());
-        assert!(m3.is_dirty());
-        assert!(m4.is_clean());
+        assert!(b1.is_dirty());
+        assert!(b2.is_dirty());
+        assert!(b3.is_dirty());
+        assert!(b4.is_clean());
         assert_eq!(a.read(), 2);
     }
 
@@ -712,25 +912,24 @@ mod tests {
     fn var_modify() {
         let dcg = Dcg::new();
         let a = dcg.var(1);
-        let m1 = memo!(dcg, a);
-        let m2 = memo!(dcg, m1);
-        let m3 = memo!(dcg, a);
-        let m4 = memo!(dcg, m3);
-        m2.read();
-        m4.read();
-        dcg.graph.borrow_mut()[m3.thunk.node.idx] = true;
-        println!("{:?}", dcg);
+        let b1 = buffer!(dcg, a);
+        let b2 = buffer!(dcg, b1);
+        let b3 = buffer!(dcg, a);
+        let b4 = buffer!(dcg, b3);
+        b2.read();
+        b4.read();
+        dcg.graph.borrow_mut()[b3.thunk.node.idx] = true;
 
-        //   m1 --> m2           (m1) --> (m2)
+        //   b1 --> b2           (b1) --> (b2)
         //  /               --> /
-        // a --> (m3) --> m4   (a) --> (m3) --> m4
+        // a --> (b3) --> b4   (a) --> (b3) --> b4
         assert_eq!(a.modify(|x| *x + 1), 1);
 
         assert!(a.is_dirty());
-        assert!(m1.is_dirty());
-        assert!(m2.is_dirty());
-        assert!(m3.is_dirty());
-        assert!(m4.is_clean());
+        assert!(b1.is_dirty());
+        assert!(b2.is_dirty());
+        assert!(b3.is_dirty());
+        assert!(b4.is_clean());
         assert_eq!(a.read(), 2);
     }
 
@@ -764,21 +963,43 @@ mod tests {
         let m1 = memo!(dcg, a);
         let m2 = memo!(dcg, b);
         let m3 = memo!(dcg, (m1, m2) => m1 + m2);
-        // we ensure m1 contains Some(value) to avoid unwrapping a None
-        m1.read();
-        a.write(2);
         dcg.graph.borrow_mut()[m1.thunk.node.idx] = false;
 
-        //        (a) --> m1           (a) --> m1
+        //        (a) --> m1            a --> m1
         //                   \  -->             \
-        // (b) --> (m2) --> (m3)   b --> m2 --> m3
+        // (b) --> (m2) --> (m3)    b --> m2 --> m3
         m3.read();
 
-        assert!(a.is_dirty());
+        assert!(a.is_clean());
         assert!(b.is_clean());
         assert!(m1.is_clean());
         assert!(m2.is_clean());
         assert!(m3.is_clean());
+    }
+
+    #[test]
+    fn buffer_read_cleans() {
+        let dcg = Dcg::new();
+        let a = dcg.var(1);
+        let b = dcg.var(1);
+        let b1 = buffer!(dcg, a);
+        let b2 = buffer!(dcg, b);
+        let b3 = buffer!(dcg, (b1, b2) => b1 + b2);
+        // we ensure b1 contains Some(value) to avoid unwrapping a None
+        b1.read();
+        a.write(2);
+        dcg.graph.borrow_mut()[b1.thunk.node.idx] = false;
+
+        //        (a) --> b1           (a) --> b1
+        //                   \  -->             \
+        // (b) --> (b2) --> (b3)   b --> b2 --> b3
+        b3.read();
+
+        assert!(a.is_dirty());
+        assert!(b.is_clean());
+        assert!(b1.is_clean());
+        assert!(b2.is_clean());
+        assert!(b3.is_clean());
     }
 
     #[test]
@@ -788,7 +1009,7 @@ mod tests {
         let b = dcg.var(1);
         let a_read = Rc::new(Cell::new(false));
         let a_read_clone = a_read.clone();
-        let safe_div = memo!(dcg, (b; a) => {
+        let safe_div = buffer!(dcg, (b; a) => {
             if b == 0 {
                 None
             } else {
@@ -797,7 +1018,7 @@ mod tests {
             }
         });
 
-        // lazy memo created
+        // lazy buffer created
         assert!(!a_read.get());
 
         a_read.set(false);

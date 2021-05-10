@@ -1,12 +1,13 @@
-use cachegrab::{incremental::Incremental, memo, thunk, Dcg};
+use cachegrab::{buffer, incremental::Incremental, memo, thunk, Dcg};
 use criterion::{black_box, criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
 use rand::{prelude::SliceRandom, rngs::SmallRng, SeedableRng};
 
 fn internals(c: &mut Criterion) {
     let dcg = Dcg::new();
     let var = dcg.var(1);
-    let memo = memo!(dcg, var);
     let thunk = thunk!(dcg, var);
+    let memo = memo!(dcg, var);
+    let buffer = buffer!(dcg, var);
 
     let mut internals = c.benchmark_group("Internals");
 
@@ -42,14 +43,23 @@ fn internals(c: &mut Criterion) {
     });
 
     internals.bench_function("read thunk", |b| b.iter(|| thunk.read()));
-
     internals.bench_function("read memo same", |b| b.iter(|| memo.read()));
     internals.bench_function("read memo changed", |b| {
         b.iter_batched(
             || {
-                var.write(if var.read() == 1 { 2 } else { 1 });
+                var.modify(|&mut x| if x == 1 { 2 } else { 1 });
             },
             |_| memo.read(),
+            BatchSize::SmallInput,
+        )
+    });
+    internals.bench_function("read buffer same", |b| b.iter(|| buffer.read()));
+    internals.bench_function("read buffer changed", |b| {
+        b.iter_batched(
+            || {
+                var.modify(|&mut x| if x == 1 { 2 } else { 1 });
+            },
+            |_| buffer.read(),
             BatchSize::SmallInput,
         )
     });
@@ -67,7 +77,37 @@ fn filter_random_letter(c: &mut Criterion) {
     population[max_size - 1] = 'b';
 
     {
-        let mut memo_group = c.benchmark_group("Filter Random Letter: Memo'd");
+        let mut thunk_group = c.benchmark_group("Filter Random Letter: Thunk");
+
+        let mut rng = SmallRng::seed_from_u64(123);
+
+        let thunk = thunk!(dcg, (needle, haystack) => {
+            haystack
+                .chars()
+                .filter(|c| *c == needle)
+                .collect::<String>()
+        });
+
+        for size in sizes.iter() {
+            thunk_group.bench_function(BenchmarkId::from_parameter(size), |b| {
+                b.iter_batched(
+                    || {
+                        population[(max_size - size)..max_size]
+                            .choose(&mut rng)
+                            .unwrap()
+                    },
+                    |c| {
+                        needle.write(*c);
+                        thunk.read();
+                    },
+                    BatchSize::SmallInput,
+                )
+            });
+        }
+    }
+
+    {
+        let mut memo_group = c.benchmark_group("Filter Random Letter: Memo");
 
         let mut rng = SmallRng::seed_from_u64(123);
 
@@ -97,11 +137,11 @@ fn filter_random_letter(c: &mut Criterion) {
     }
 
     {
-        let mut thunk_group = c.benchmark_group("Filter Random Letter: Thunk");
+        let mut buffer_group = c.benchmark_group("Filter Random Letter: Buffer");
 
         let mut rng = SmallRng::seed_from_u64(123);
 
-        let thunk = thunk!(dcg, (needle, haystack) => {
+        let buffer = buffer!(dcg, (needle, haystack) => {
             haystack
                 .chars()
                 .filter(|c| *c == needle)
@@ -109,7 +149,7 @@ fn filter_random_letter(c: &mut Criterion) {
         });
 
         for size in sizes.iter() {
-            thunk_group.bench_function(BenchmarkId::from_parameter(size), |b| {
+            buffer_group.bench_function(BenchmarkId::from_parameter(size), |b| {
                 b.iter_batched(
                     || {
                         population[(max_size - size)..max_size]
@@ -118,7 +158,7 @@ fn filter_random_letter(c: &mut Criterion) {
                     },
                     |c| {
                         needle.write(*c);
-                        thunk.read();
+                        buffer.read();
                     },
                     BatchSize::SmallInput,
                 )
