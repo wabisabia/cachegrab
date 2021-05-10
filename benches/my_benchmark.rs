@@ -69,7 +69,7 @@ fn filter_random_letter(c: &mut Criterion) {
     let dcg = Dcg::new();
 
     let needle = dcg.var('a');
-    let haystack = dcg.var("the quick brown fox jumped over the lazy dog");
+    let haystack = dcg.var("Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.");
 
     let sizes = [2, 10, 100, 1000];
     let max_size = sizes[sizes.len() - 1];
@@ -180,12 +180,11 @@ fn filter_random_letter(c: &mut Criterion) {
                             .unwrap()
                     },
                     |needle| {
-                        black_box(
-                            "the quick brown fox jumped over the lazy dog"
+                        let _ = black_box(
+                            "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.")
                                 .chars()
                                 .filter(|c| *c == *needle)
-                                .collect::<String>(),
-                        );
+                                .collect::<String>();
                     },
                     BatchSize::SmallInput,
                 )
