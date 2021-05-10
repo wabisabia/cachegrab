@@ -41,7 +41,9 @@ pub trait Incremental {
         let value = self.latest();
         if self.is_dirty() {
             for node in self.nodes() {
-                node.clean();
+                if node.is_dirty() {
+                    node.clean();
+                }
             }
         }
         value
@@ -137,5 +139,24 @@ where
 
     fn nodes(&self) -> Vec<&Node> {
         self.as_ref().nodes()
+    }
+}
+
+impl<A, T> Incremental for Vec<A>
+where
+    A: Incremental<Output = T>,
+{
+    type Output = Vec<T>;
+
+    fn latest(&self) -> Self::Output {
+        self.iter().map(|x| x.read()).collect()
+    }
+
+    fn is_dirty(&self) -> bool {
+        self.iter().any(|x| x.is_dirty())
+    }
+
+    fn nodes(&self) -> Vec<&Node> {
+        self.iter().map(|x| x.nodes()).flatten().collect()
     }
 }
