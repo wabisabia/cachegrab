@@ -304,8 +304,12 @@ impl Node {
         }
     }
 
+    fn clean(&self) {
+        self.graph.borrow_mut()[self.idx] = false;
+    }
+
     fn is_dirty(&self) -> bool {
-        self.graph.borrow_mut()[self.idx]
+        self.graph.borrow()[self.idx]
     }
 
     /// Dirties the node's transitive dependents.
@@ -441,8 +445,7 @@ pub struct RawMemo<T> {
 impl<T: Clone> Incremental for RawVar<T> {
     type Output = T;
 
-    fn read(&self) -> Self::Output {
-        self.node.graph.borrow_mut()[self.node.idx] = false;
+    fn latest(&self) -> Self::Output {
         self.value.borrow().clone()
     }
 
@@ -458,8 +461,7 @@ impl<T: Clone> Incremental for RawVar<T> {
 impl<T> Incremental for RawThunk<T> {
     type Output = T;
 
-    fn read(&self) -> Self::Output {
-        self.node.graph.borrow_mut()[self.node.idx] = false;
+    fn latest(&self) -> Self::Output {
         (self.f)()
     }
 
@@ -475,7 +477,7 @@ impl<T> Incremental for RawThunk<T> {
 impl<T: Clone> Incremental for RawMemo<T> {
     type Output = T;
 
-    fn read(&self) -> Self::Output {
+    fn latest(&self) -> Self::Output {
         if self.is_dirty() {
             self.cached.replace(Some(self.thunk.read()));
         }
