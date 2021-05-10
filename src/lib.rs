@@ -340,14 +340,14 @@ impl Dcg {
     /// // a doesn't have to be- and isn't- read!
     /// assert_eq!(safe_div.read(), None);
     /// ```
-    pub fn buffer<P, T, F>(&self, params: P, f: F) -> Buffer<T>
+    pub fn buffer<P, F, T>(&self, params: P, f: F) -> Buffer<T>
     where
         P: Incremental,
         F: Fn() -> T + 'static,
     {
         Rc::new(RawBuffer {
             thunk: RawThunk::new(self, &params, f),
-            cached: RefCell::new(None),
+            buffered: RefCell::default(),
         })
     }
 }
@@ -527,7 +527,7 @@ where
 /// [`RawThunk`] that caches only its previous value.
 pub struct RawBuffer<T> {
     thunk: RawThunk<T>,
-    cached: RefCell<Option<T>>,
+    buffered: RefCell<Option<T>>,
 }
 
 impl<T: Clone> Incremental for RawVar<T> {
@@ -595,10 +595,10 @@ impl<T: Clone> Incremental for RawBuffer<T> {
     type Output = T;
 
     fn latest(&self) -> Self::Output {
-        if self.is_dirty() {
-            self.cached.replace(Some(self.thunk.read()));
+        if self.is_dirty() || self.buffered.borrow().is_none() {
+            self.buffered.replace(Some(self.thunk.read()));
         }
-        self.cached.borrow().clone().unwrap()
+        self.buffered.borrow().clone().unwrap()
     }
 
     fn is_dirty(&self) -> bool {
