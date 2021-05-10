@@ -493,7 +493,7 @@ impl<T: Clone> Incremental for RawMemo<T> {
     }
 }
 
-/// Creates a dirty [`Thunk`].
+/// Ergonomic [`Thunk`] creation.
 ///
 /// The first argument is the [`Dcg`] in which the [`Thunk`] will be created.
 ///
@@ -532,39 +532,31 @@ impl<T: Clone> Incremental for RawMemo<T> {
 /// ```
 #[macro_export]
 macro_rules! thunk {
-    ($dcg:expr, $read:ident) => {
-        thunk!($dcg, ($read) => $read)
-    };
-    ($dcg:expr, ($($read:ident),*; $($unread:ident),*) => $f:expr) => {{
+    ($dcg:ident, ($($read:ident),*; $($unread:ident),*) => $f:expr) => {{
         $crate::paste! {
-            $(
-                let [<$read _clone>] = $read.clone();
-                let [<$read _param>] = $read.clone();
-            )*
-            $(
-                let $unread = $unread.clone();
-                let [<$unread _param>] = $unread.clone();
-            )*
-            $dcg.thunk(($([<$read _param>],)* $([<$unread _param>]),*), move || {
-                $(
-                    let $read = $crate::incremental::Incremental::read(&*[<$read _clone>]);
-                )*
+            $(let [<$read _clone>] = std::rc::Rc::clone(&$read);)*
+            $(let $unread = std::rc::Rc::clone(&$unread);)*
+            $dcg.thunk(($(std::rc::Rc::clone(&$read),)* $(std::rc::Rc::clone(&$unread)),*), move || {
+                $(let $read = $crate::incremental::Incremental::read(&*[<$read _clone>]);)*
                 $f
             })
         }
     }};
-    ($dcg:expr, $read:ident => $f:expr) => {
+    ($dcg:ident, $read:ident) => {
+        thunk!($dcg, ($read) => $read)
+    };
+    ($dcg:ident, $read:ident => $f:expr) => {
         thunk!($dcg, ($read) => $f)
     };
-    ($dcg:expr, ($($read:ident),*) => $f:expr) => {
+    ($dcg:ident, ($($read:ident),*) => $f:expr) => {
         thunk!($dcg, ($($read),*;) => $f)
     };
-    ($dcg:expr, $f:expr) => {
+    ($dcg:ident, $f:expr) => {
         thunk!($dcg, (;) => $f)
     };
 }
 
-/// Creates a clean [`Memo`] and cleans its transitive dependencies.
+/// Ergonomic [`Memo`] creation.
 ///
 /// The first argument is the [`Dcg`] in which the [`Memo`] will be created.
 ///
@@ -605,34 +597,26 @@ macro_rules! thunk {
 /// ```
 #[macro_export]
 macro_rules! memo {
-    ($dcg:expr, $read:ident) => {
-        memo!($dcg, ($read) => $read)
-    };
-    ($dcg:expr, ($($read:ident),*; $($unread:ident),*) => $f:expr) => {{
+    ($dcg:ident, ($($read:ident),*; $($unread:ident),*) => $f:expr) => {{
         $crate::paste! {
-            $(
-                let [<$read _inc>] = $read.clone();
-                let [<$read _param>] = $read.clone();
-            )*
-            $(
-                let $unread = $unread.clone();
-                let [<$unread _param>] = $unread.clone();
-            )*
-            $dcg.memo(($([<$read _param>],)* $([<$unread _param>]),*), move || {
-                $(
-                    let $read = $crate::incremental::Incremental::read(&*[<$read _inc>]);
-                )*
+            $(let [<$read _clone>] = std::rc::Rc::clone(&$read);)*
+            $(let $unread = std::rc::Rc::clone(&$unread);)*
+            $dcg.memo(($(std::rc::Rc::clone(&$read),)* $(std::rc::Rc::clone(&$unread)),*), move || {
+                $(let $read = $crate::incremental::Incremental::read(&*[<$read _clone>]);)*
                 $f
             })
         }
     }};
-    ($dcg:expr, $read:ident => $f:expr) => {
+    ($dcg:ident, $read:ident) => {
+        memo!($dcg, ($read) => $read)
+    };
+    ($dcg:ident, $read:ident => $f:expr) => {
         memo!($dcg, ($read) => $f)
     };
-    ($dcg:expr, ($($read:ident),*) => $f:expr) => {
+    ($dcg:ident, ($($read:ident),*) => $f:expr) => {
         memo!($dcg, ($($read),*;) => $f)
     };
-    ($dcg:expr, $f:expr) => {
+    ($dcg:ident, $f:expr) => {
         memo!($dcg, (;) => $f)
     };
 }
