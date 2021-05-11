@@ -149,14 +149,14 @@ where
     type Output = Vec<T>;
 
     fn latest(&self) -> Self::Output {
-        self.iter().map(|x| x.read()).collect()
+        self.iter().map(Incremental::read).collect()
     }
 
     fn is_dirty(&self) -> bool {
-        self.iter().any(|x| x.is_dirty())
+        self.iter().any(Incremental::is_dirty)
     }
 
     fn nodes(&self) -> Vec<&Node> {
-        self.iter().map(|x| x.nodes()).flatten().collect()
+        self.iter().map(Incremental::nodes).flatten().collect()
     }
 }
