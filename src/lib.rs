@@ -574,7 +574,7 @@ where
     type Output = T;
 
     fn latest(&self) -> Self::Output {
-        let args = self.params.read();
+        let args = self.params.latest();
         let mut cache = self.cache.borrow_mut();
         match cache.get(&args) {
             Some(result) => result.clone(),
