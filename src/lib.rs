@@ -499,7 +499,7 @@ impl<T: PartialEq> RawVar<T> {
 
 /// Naively re-computing [`Dcg`] node.
 pub struct RawThunk<T> {
-    f: Box<dyn Fn() -> T + 'static>,
+    f: Box<dyn Fn() -> T>,
     node: Node,
 }
 
