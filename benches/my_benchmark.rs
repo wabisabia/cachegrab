@@ -76,121 +76,121 @@ fn filter_random_letter(c: &mut Criterion) {
     let mut population = vec!['a'; max_size];
     population[max_size - 1] = 'b';
 
-    {
-        let mut thunk_group = c.benchmark_group("Filter Random Letter: Thunk");
+    let mut thunk_group = c.benchmark_group("Filter Random Letter: Thunk");
 
-        let mut rng = SmallRng::seed_from_u64(123);
+    let mut rng = SmallRng::seed_from_u64(123);
 
-        let thunk = thunk!(dcg, (needle, haystack) => {
-            haystack
-                .chars()
-                .filter(|c| *c == needle)
-                .collect::<String>()
+    let thunk = thunk!(dcg, (needle, haystack) => {
+        haystack
+            .chars()
+            .filter(|c| *c == needle)
+            .collect::<String>()
+    });
+
+    for size in sizes.iter() {
+        thunk_group.bench_function(BenchmarkId::from_parameter(size), |b| {
+            b.iter_batched(
+                || {
+                    population[(max_size - size)..max_size]
+                        .choose(&mut rng)
+                        .unwrap()
+                },
+                |c| {
+                    needle.write(*c);
+                    thunk.read();
+                },
+                BatchSize::SmallInput,
+            )
         });
-
-        for size in sizes.iter() {
-            thunk_group.bench_function(BenchmarkId::from_parameter(size), |b| {
-                b.iter_batched(
-                    || {
-                        population[(max_size - size)..max_size]
-                            .choose(&mut rng)
-                            .unwrap()
-                    },
-                    |c| {
-                        needle.write(*c);
-                        thunk.read();
-                    },
-                    BatchSize::SmallInput,
-                )
-            });
-        }
     }
 
-    {
-        let mut memo_group = c.benchmark_group("Filter Random Letter: Memo");
+    thunk_group.finish();
 
-        let mut rng = SmallRng::seed_from_u64(123);
+    let mut memo_group = c.benchmark_group("Filter Random Letter: Memo");
 
-        let memo = memo!(dcg, (needle, haystack) => {
-            haystack
-                .chars()
-                .filter(|c| *c == needle)
-                .collect::<String>()
+    let mut rng = SmallRng::seed_from_u64(123);
+
+    let memo = memo!(dcg, (needle, haystack) => {
+        haystack
+            .chars()
+            .filter(|c| *c == needle)
+            .collect::<String>()
+    });
+
+    for size in sizes.iter() {
+        memo_group.bench_function(BenchmarkId::from_parameter(size), |b| {
+            b.iter_batched(
+                || {
+                    population[(max_size - size)..max_size]
+                        .choose(&mut rng)
+                        .unwrap()
+                },
+                |c| {
+                    needle.write(*c);
+                    memo.read();
+                },
+                BatchSize::SmallInput,
+            )
         });
-
-        for size in sizes.iter() {
-            memo_group.bench_function(BenchmarkId::from_parameter(size), |b| {
-                b.iter_batched(
-                    || {
-                        population[(max_size - size)..max_size]
-                            .choose(&mut rng)
-                            .unwrap()
-                    },
-                    |c| {
-                        needle.write(*c);
-                        memo.read();
-                    },
-                    BatchSize::SmallInput,
-                )
-            });
-        }
     }
 
-    {
-        let mut buffer_group = c.benchmark_group("Filter Random Letter: Buffer");
+    memo_group.finish();
 
-        let mut rng = SmallRng::seed_from_u64(123);
+    let mut buffer_group = c.benchmark_group("Filter Random Letter: Buffer");
 
-        let buffer = buffer!(dcg, (needle, haystack) => {
-            haystack
-                .chars()
-                .filter(|c| *c == needle)
-                .collect::<String>()
+    let mut rng = SmallRng::seed_from_u64(123);
+
+    let buffer = buffer!(dcg, (needle, haystack) => {
+        haystack
+            .chars()
+            .filter(|c| *c == needle)
+            .collect::<String>()
+    });
+
+    for size in sizes.iter() {
+        buffer_group.bench_function(BenchmarkId::from_parameter(size), |b| {
+            b.iter_batched(
+                || {
+                    population[(max_size - size)..max_size]
+                        .choose(&mut rng)
+                        .unwrap()
+                },
+                |c| {
+                    needle.write(*c);
+                    buffer.read();
+                },
+                BatchSize::SmallInput,
+            )
         });
-
-        for size in sizes.iter() {
-            buffer_group.bench_function(BenchmarkId::from_parameter(size), |b| {
-                b.iter_batched(
-                    || {
-                        population[(max_size - size)..max_size]
-                            .choose(&mut rng)
-                            .unwrap()
-                    },
-                    |c| {
-                        needle.write(*c);
-                        buffer.read();
-                    },
-                    BatchSize::SmallInput,
-                )
-            });
-        }
     }
 
-    {
-        let mut raw_group = c.benchmark_group("Filter Random Letter: Raw");
+    buffer_group.finish();
 
-        let mut rng = SmallRng::seed_from_u64(123);
+    let mut raw_group = c.benchmark_group("Filter Random Letter: Raw");
 
-        for size in sizes.iter() {
-            raw_group.bench_function(BenchmarkId::from_parameter(size), |b| {
-                b.iter_batched(
-                    || {
-                        population[(max_size - size)..max_size]
-                            .choose(&mut rng)
-                            .unwrap()
-                    },
-                    |needle| {
-                        let _ = black_box(
-                            "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.")
-                                .chars()
-                                .filter(|c| *c == *needle)
-                                .collect::<String>();
+    let mut rng = SmallRng::seed_from_u64(123);
+
+    for size in sizes.iter() {
+        raw_group.bench_function(BenchmarkId::from_parameter(size), |b| {
+            b.iter_batched(
+                || {
+                    population[(max_size - size)..max_size]
+                        .choose(&mut rng)
+                        .unwrap()
+                },
+                |needle| {
+                    let _ = black_box(
+                        "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.")
+                        .chars()
+                        .filter(|c| *c == *needle)
+                        .collect::<String>();
                     },
                     BatchSize::SmallInput,
-                )
-            });
-        }
+            )
+        });
     }
+
+    raw_group.finish();
 }
 
 // fn depth_first_search() {
