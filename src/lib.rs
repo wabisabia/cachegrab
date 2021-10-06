@@ -173,8 +173,9 @@ impl Dcg {
     /// # #[allow(unused)]
     /// let dcg = Dcg::new();
     /// ```
+    #[must_use]
     pub fn new() -> Self {
-        Default::default()
+        Self::default()
     }
 
     /// Creates a dirty [`Var`], containing `value`.
@@ -241,12 +242,12 @@ impl Dcg {
     /// // a doesn't have to be- and isn't- read!
     /// assert_eq!(safe_div.read(), None);
     /// ```
-    pub fn thunk<P, T, F>(&self, params: P, f: F) -> Thunk<T>
+    pub fn thunk<P, T, F>(&self, params: &P, f: F) -> Thunk<T>
     where
         P: Incremental,
         F: Fn() -> T + 'static,
     {
-        Rc::new(RawThunk::new(self, &params, f))
+        Rc::new(RawThunk::new(self, params, f))
     }
 
     /// Creates a dirty [`Memo`], adding incoming dependency edges from `params` and storing `f`.
@@ -344,13 +345,13 @@ impl Dcg {
     /// // a doesn't have to be- and isn't- read!
     /// assert_eq!(safe_div.read(), None);
     /// ```
-    pub fn buffer<P, F, T>(&self, params: P, f: F) -> Buffer<T>
+    pub fn buffer<P, F, T>(&self, params: &P, f: F) -> Buffer<T>
     where
         P: Incremental,
         F: Fn() -> T + 'static,
     {
         Rc::new(RawBuffer {
-            thunk: RawThunk::new(self, &params, f),
+            thunk: RawThunk::new(self, params, f),
             buffered: RefCell::default(),
         })
     }
@@ -576,13 +577,12 @@ where
     fn latest(&self) -> Self::Output {
         let args = self.params.latest();
         let mut cache = self.cache.borrow_mut();
-        match cache.get(&args) {
-            Some(result) => result.clone(),
-            None => {
-                let missed = self.thunk.read();
-                cache.insert(args, missed.clone());
-                missed
-            }
+        if let Some(result) = cache.get(&args) {
+            result.clone()
+        } else {
+            let missed = self.thunk.read();
+            cache.insert(args, missed.clone());
+            missed
         }
     }
 
@@ -657,7 +657,7 @@ macro_rules! thunk {
         $crate::paste! {
             $(let [<$read _clone>] = std::rc::Rc::clone(&$read);)*
             $(let $unread = std::rc::Rc::clone(&$unread);)*
-            $dcg.thunk(($(std::rc::Rc::clone(&$read),)* $(std::rc::Rc::clone(&$unread)),*), move || {
+            $dcg.thunk(&($(std::rc::Rc::clone(&$read),)* $(std::rc::Rc::clone(&$unread)),*), move || {
                 $(let $read = $crate::incremental::Incremental::read(&*[<$read _clone>]);)*
                 $f
             })
@@ -787,7 +787,7 @@ macro_rules! buffer {
         $crate::paste! {
             $(let [<$read _clone>] = std::rc::Rc::clone(&$read);)*
             $(let $unread = std::rc::Rc::clone(&$unread);)*
-            $dcg.buffer(($(std::rc::Rc::clone(&$read),)* $(std::rc::Rc::clone(&$unread)),*), move || {
+            $dcg.buffer(&($(std::rc::Rc::clone(&$read),)* $(std::rc::Rc::clone(&$unread)),*), move || {
                 $(let $read = $crate::incremental::Incremental::read(&*[<$read _clone>]);)*
                 $f
             })

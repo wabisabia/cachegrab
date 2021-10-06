@@ -157,6 +157,6 @@ where
     }
 
     fn nodes(&self) -> Vec<&Node> {
-        self.iter().map(Incremental::nodes).flatten().collect()
+        self.iter().flat_map(Incremental::nodes).collect()
     }
 }
