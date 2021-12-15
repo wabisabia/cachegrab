@@ -37,7 +37,7 @@
 //! }
 //! ```
 //!
-//! All [`Dcg`] nodes' ([`Var`], [`Thunk`], [`Memo`], [`Buffer`]) values can be retrieved with [`read`](Incremental::read):
+//! All [`Dcg`] nodes' ([`Var`], [`Thunk`], [`Memo`], [`Buffer`]) values can be retrieved with (`read`)[`Incremental::read`]:
 //!
 //! ```
 //! # use cachegrab::{Dcg, incremental::Incremental, Var, thunk, Thunk, buffer, Buffer};
@@ -628,7 +628,7 @@ impl<T: Clone> Incremental for RawBuffer<T> {
 ///         - `read` - an [`Incremental`]'s `ident`.
 ///         - `(reads)` where `reads` is a `,`-separated list of [`Incremental`] `ident`s.
 ///     - `expr` is an expression that treats:
-///         - `read` params as if they were (`read`)[Incremental::read].
+///         - `read` params as if they were (`read`)[`Incremental::read`].
 ///         - `unread` params as normal.
 /// - An `expr` (ideally not referencing an [`Incremental`]).
 ///
@@ -684,14 +684,14 @@ macro_rules! thunk {
 /// The second argument specifies how the [`Memo`] will generate values.
 /// It can be:
 ///
-/// - An [`Incremental`]'s `ident`; the [`Incremental`] is simply (`read`)[Incremental::read].
+/// - An [`Incremental`]'s `ident`; the [`Incremental`] is simply (`read`)[`Incremental::read`].
 /// - Of the form `params => expr` where
 ///     - `params` can be
 ///         - `(reads; unreads)` where `read` and `unread` are `,`-separated lists of [`Incremental`] `ident`s.
 ///         - `read` - an [`Incremental`]'s `ident`.
 ///         - `(reads)` where `reads` is a `,`-separated list of [`Incremental`] `ident`s.
 ///     - `expr` is an expression that treats:
-///         - `read` params as if they were (`read`)[Incremental::read].
+///         - `read` params as if they were (`read`)[`Incremental::read`].
 ///         - `unread` params as normal.
 /// - An `expr` (ideally not referencing an [`Incremental`]).
 ///
@@ -749,14 +749,14 @@ macro_rules! memo {
 /// The second argument specifies how the [`Buffer`] will generate values.
 /// It can be:
 ///
-/// - An [`Incremental`]'s `ident`; the [`Incremental`] is simply (`read`)[Incremental::read].
+/// - An [`Incremental`]'s `ident`; the [`Incremental`] is simply (`read`)[`Incremental::read`].
 /// - Of the form `params => expr` where
 ///     - `params` can be
 ///         - `(reads; unreads)` where `read` and `unread` are `,`-separated lists of [`Incremental`] `ident`s.
 ///         - `read` - an [`Incremental`]'s `ident`.
 ///         - `(reads)` where `reads` is a `,`-separated list of [`Incremental`] `ident`s.
 ///     - `expr` is an expression that treats:
-///         - `read` params as if they were (`read`)[Incremental::read].
+///         - `read` params as if they were (`read`)[`Incremental::read`].
 ///         - `unread` params as normal.
 /// - An `expr` (ideally not referencing an [`Incremental`]).
 ///
