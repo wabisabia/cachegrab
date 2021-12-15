@@ -1,7 +1,7 @@
 use cachegrab::{incremental::Incremental, thunk, Dcg};
 
 fn main() {
-    let dcg = Dcg::new();
+    let dcg = Dcg::default();
     let numerator = dcg.var(1);
     let denominator = dcg.var(1);
     let safe_div = thunk!(dcg, (denominator; numerator) => {

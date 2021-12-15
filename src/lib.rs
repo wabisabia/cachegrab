@@ -18,7 +18,7 @@
 //!
 //! impl Circle {
 //!     fn from_radius(radius: f64) -> Self {
-//!         let dcg = Dcg::new();
+//!         let dcg = Dcg::default();
 //!         let radius = dcg.var(radius);
 //!         let circum = thunk!(dcg, radius => {
 //!             println!("Calculating circumference...");
@@ -51,7 +51,7 @@
 //! #
 //! # impl Circle {
 //! #     fn from_radius(radius: f64) -> Self {
-//! #         let dcg = Dcg::new();
+//! #         let dcg = Dcg::default();
 //! #         let radius = dcg.var(radius);
 //! #         let circum = thunk!(dcg, radius => {
 //! #             println!("Calculating circumference...");
@@ -90,7 +90,7 @@
 //! #
 //! # impl Circle {
 //! #     fn from_radius(radius: f64) -> Self {
-//! #         let dcg = Dcg::new();
+//! #         let dcg = Dcg::default();
 //! #         let radius = dcg.var(radius);
 //! #         let circum = thunk!(dcg, radius => {
 //! #             println!("Calculating circumference...");
@@ -124,7 +124,7 @@
 //! ```
 //! # use cachegrab::{Dcg, buffer};
 //! # use std::f64::consts::PI;
-//! # let dcg = Dcg::new();
+//! # let dcg = Dcg::default();
 //! # let radius = dcg.var(1.);
 //! let area = buffer!(dcg, radius => PI * radius * radius);        // radius used here
 //! let circumference = buffer!(dcg, radius => 2. * PI * radius);   // ... and here
@@ -163,21 +163,6 @@ pub type Memo<A, T> = Rc<RawMemo<A, T>>;
 pub type Buffer<T> = Rc<RawBuffer<T>>;
 
 impl Dcg {
-    /// Creates a new, empty DCG.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use cachegrab::Dcg;
-    ///
-    /// # #[allow(unused)]
-    /// let dcg = Dcg::new();
-    /// ```
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     /// Creates a dirty [`Var`], containing `value`.
     ///
     /// The [`Var`] starts dirty as it has never been read.
@@ -187,7 +172,7 @@ impl Dcg {
     /// ```
     /// use cachegrab::{Dcg, incremental::Incremental};
     ///
-    /// let dcg = Dcg::new();
+    /// let dcg = Dcg::default();
     /// let a = dcg.var(1);
     ///
     /// assert!(a.is_dirty());
@@ -222,12 +207,12 @@ impl Dcg {
     /// ```
     /// use cachegrab::{Dcg, incremental::Incremental, thunk};
     ///
-    /// let dcg = Dcg::new();
+    /// let dcg = Dcg::default();
     /// let a = dcg.var(1);
     /// let b = dcg.var(1);
     /// let a_inc = a.clone();
     /// let b_inc = b.clone();
-    /// let safe_div = dcg.thunk((a.clone(), b.clone()),
+    /// let safe_div = dcg.thunk(&(a.clone(), b.clone()),
     ///     move || {
     ///         let b = b_inc.read();
     ///         if b == 0 {
@@ -271,12 +256,12 @@ impl Dcg {
     /// ```
     /// use cachegrab::{Dcg, incremental::Incremental, thunk};
     ///
-    /// let dcg = Dcg::new();
+    /// let dcg = Dcg::default();
     /// let a = dcg.var(1);
     /// let b = dcg.var(1);
     /// let a_inc = a.clone();
     /// let b_inc = b.clone();
-    /// let safe_div = dcg.buffer((a.clone(), b.clone()),
+    /// let safe_div = dcg.buffer(&(a.clone(), b.clone()),
     ///     move || {
     ///         let b = b_inc.read();
     ///         if b == 0 {
@@ -325,12 +310,12 @@ impl Dcg {
     /// ```
     /// use cachegrab::{Dcg, incremental::Incremental, thunk};
     ///
-    /// let dcg = Dcg::new();
+    /// let dcg = Dcg::default();
     /// let a = dcg.var(1);
     /// let b = dcg.var(1);
     /// let a_inc = a.clone();
     /// let b_inc = b.clone();
-    /// let safe_div = dcg.buffer((a.clone(), b.clone()),
+    /// let safe_div = dcg.buffer(&(a.clone(), b.clone()),
     ///     move || {
     ///         let b = b_inc.read();
     ///         if b == 0 {
@@ -437,7 +422,7 @@ impl<T: PartialEq> RawVar<T> {
     /// ```
     /// use cachegrab::{Dcg, incremental::Incremental};
     ///
-    /// let dcg = Dcg::new();
+    /// let dcg = Dcg::default();
     /// let a = dcg.var(1);
     ///
     /// // Ensures `a` is clean
@@ -470,7 +455,7 @@ impl<T: PartialEq> RawVar<T> {
     /// ```
     /// use cachegrab::{Dcg, incremental::Incremental};
     ///
-    /// let dcg = Dcg::new();
+    /// let dcg = Dcg::default();
     /// let a = dcg.var(1);
     ///
     /// // Ensure `a` is clean
@@ -635,7 +620,7 @@ impl<T: Clone> Incremental for RawBuffer<T> {
 /// ```
 /// use cachegrab::{Dcg, incremental::Incremental, thunk};
 ///
-/// let dcg = Dcg::new();
+/// let dcg = Dcg::default();
 /// let numerator = dcg.var(1);
 /// let denominator = dcg.var(1);
 /// let safe_div = thunk!(dcg, (denominator; numerator) => {
@@ -700,7 +685,7 @@ macro_rules! thunk {
 /// ```
 /// use cachegrab::{Dcg, incremental::Incremental, memo};
 ///
-/// let dcg = Dcg::new();
+/// let dcg = Dcg::default();
 /// let numerator = dcg.var(1);
 /// let denominator = dcg.var(1);
 /// let safe_div = memo!(dcg, (denominator; numerator) => {
@@ -765,7 +750,7 @@ macro_rules! memo {
 /// ```
 /// use cachegrab::{Dcg, incremental::Incremental, buffer};
 ///
-/// let dcg = Dcg::new();
+/// let dcg = Dcg::default();
 /// let numerator = dcg.var(1);
 /// let denominator = dcg.var(1);
 /// let safe_div = buffer!(dcg, (denominator; numerator) => {
@@ -817,7 +802,7 @@ mod tests {
 
     #[test]
     fn create_var() {
-        let dcg = Dcg::new();
+        let dcg = Dcg::default();
 
         let a = dcg.var(1);
 
@@ -827,7 +812,7 @@ mod tests {
 
     #[test]
     fn create_thunk() {
-        let dcg = Dcg::new();
+        let dcg = Dcg::default();
 
         let t = thunk!(dcg, 1);
 
@@ -837,7 +822,7 @@ mod tests {
 
     #[test]
     fn create_memo() {
-        let dcg = Dcg::new();
+        let dcg = Dcg::default();
 
         let m = memo!(dcg, 1);
 
@@ -847,7 +832,7 @@ mod tests {
 
     #[test]
     fn create_buffer() {
-        let dcg = Dcg::new();
+        let dcg = Dcg::default();
 
         let b = buffer!(dcg, 1);
 
@@ -857,7 +842,7 @@ mod tests {
 
     #[test]
     fn var_read() {
-        let dcg = Dcg::new();
+        let dcg = Dcg::default();
         let a = dcg.var(1);
 
         assert_eq!(a.read(), 1);
@@ -865,7 +850,7 @@ mod tests {
 
     #[test]
     fn thunk_read() {
-        let dcg = Dcg::new();
+        let dcg = Dcg::default();
         let t = thunk!(dcg, 1);
 
         assert_eq!(t.read(), 1);
@@ -873,7 +858,7 @@ mod tests {
 
     #[test]
     fn memo_read() {
-        let dcg = Dcg::new();
+        let dcg = Dcg::default();
         let m = memo!(dcg, 1);
 
         assert_eq!(m.read(), 1);
@@ -881,7 +866,7 @@ mod tests {
 
     #[test]
     fn buffer_read() {
-        let dcg = Dcg::new();
+        let dcg = Dcg::default();
         let b = buffer!(dcg, 1);
 
         assert_eq!(b.read(), 1);
@@ -889,7 +874,7 @@ mod tests {
 
     #[test]
     fn var_write() {
-        let dcg = Dcg::new();
+        let dcg = Dcg::default();
         let a = dcg.var(1);
         let b1 = buffer!(dcg, a);
         let b2 = buffer!(dcg, b1);
@@ -914,7 +899,7 @@ mod tests {
 
     #[test]
     fn var_modify() {
-        let dcg = Dcg::new();
+        let dcg = Dcg::default();
         let a = dcg.var(1);
         let b1 = buffer!(dcg, a);
         let b2 = buffer!(dcg, b1);
@@ -939,7 +924,7 @@ mod tests {
 
     #[test]
     fn thunk_read_cleans() {
-        let dcg = Dcg::new();
+        let dcg = Dcg::default();
         let a = dcg.var(1);
         let b = dcg.var(1);
         let t1 = thunk!(dcg, a);
@@ -961,7 +946,7 @@ mod tests {
 
     #[test]
     fn memo_read_cleans() {
-        let dcg = Dcg::new();
+        let dcg = Dcg::default();
         let a = dcg.var(1);
         let b = dcg.var(1);
         let m1 = memo!(dcg, a);
@@ -983,7 +968,7 @@ mod tests {
 
     #[test]
     fn buffer_read_cleans() {
-        let dcg = Dcg::new();
+        let dcg = Dcg::default();
         let a = dcg.var(1);
         let b = dcg.var(1);
         let b1 = buffer!(dcg, a);
@@ -1008,7 +993,7 @@ mod tests {
 
     #[test]
     fn conditional_execution() {
-        let dcg = Dcg::new();
+        let dcg = Dcg::default();
         let a = dcg.var(1);
         let b = dcg.var(1);
         let a_read = Rc::new(Cell::new(false));

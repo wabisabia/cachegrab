@@ -15,7 +15,7 @@ struct Circle {
 
 impl Circle {
     pub fn from_radius(radius: f64) -> Self {
-        let dcg = Dcg::new();
+        let dcg = Dcg::default();
         let radius = dcg.var(radius);
         let pos = dcg.var((0., 0.));
         let circumference = buffer!(dcg, radius => 2. * PI * radius);

@@ -1,7 +1,7 @@
 use cachegrab::{buffer, incremental::Incremental, Dcg};
 
 fn main() {
-    let dcg = Dcg::new();
+    let dcg = Dcg::default();
 
     let a = dcg.var(String::from("Hello "));
 

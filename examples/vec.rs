@@ -2,7 +2,7 @@ use cachegrab::{buffer, incremental::Incremental, Dcg};
 use std::rc::Rc;
 
 fn main() {
-    let dcg = Dcg::new();
+    let dcg = Dcg::default();
     let ones = Rc::new((0..10).map(|_| dcg.var(1)).collect::<Vec<_>>());
     let identity = buffer!(dcg, ones => {
         println!("computing...");
