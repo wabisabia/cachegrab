@@ -471,9 +471,9 @@ dependencies = [
 
 [[package]]
 name = "regex"
-version = "1.5.1"
+version = "1.5.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a068b905b8cb93815aa3069ae48653d90f382308aebd1d33d940ac1f1d771e2d"
+checksum = "d83f127d94bdbcda4c8cc2e50f6f84f4b611f69c902699ca385a39c3a75f9ff1"
 dependencies = [
  "regex-syntax",
 ]
@@ -489,9 +489,9 @@ dependencies = [
 
 [[package]]
 name = "regex-syntax"
-version = "0.6.24"
+version = "0.6.26"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "00efb87459ba4f6fb2169d20f68565555688e1250ee6825cdf6254f8b48fafb2"
+checksum = "49b3de9ec5dc0a3417da371aab17d729997c15010e7fd24ff707773a33bddb64"
 
 [[package]]
 name = "rustc_version"
